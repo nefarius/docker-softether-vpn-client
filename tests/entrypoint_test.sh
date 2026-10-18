@@ -174,6 +174,15 @@ pass "unsafe SE_SERVER"
 
 new_case
 base_env
+SE_SERVER="2001:db8::1"
+run_setup
+assert_eq "$status" "1" "IPv6 SE_SERVER status"
+printf '%s\n' "$output" | grep -F -q "SE_SERVER contains unsupported characters" || fail "IPv6 SE_SERVER message"
+assert_not_contains "$MOCK_LOG" "vpnclient arg=start" "IPv6 SE_SERVER must not start the client"
+pass "IPv6 SE_SERVER"
+
+new_case
+base_env
 SE_NICNAME="thisnameistoolong"
 run_setup
 assert_eq "$status" "1" "long SE_NICNAME status"

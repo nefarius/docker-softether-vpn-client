@@ -37,6 +37,9 @@ require_server() {
         *[!A-Za-z0-9._:-]*)
             fail "SE_SERVER contains unsupported characters"
             ;;
+        *:*:*)
+            fail "SE_SERVER contains unsupported characters"
+            ;;
     esac
 }
 
