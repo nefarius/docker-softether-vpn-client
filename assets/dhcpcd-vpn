@@ -23,4 +23,15 @@ done
 
 # --nohook resolv.conf keeps VPN DHCP from replacing the container resolv.conf.
 # --nobackground keeps dhcpcd attached to Supervisor.
-exec dhcpcd --nobackground --debug --nohook resolv.conf "$iface"
+# The TAP reports itself as Ethernet. dhcpcd then leaves the BOOTP broadcast
+# flag clear, and the server unicasts the offer to an address the adapter does
+# not have yet. Windows and the previous dhclient setup request a broadcast
+# offer, which a SoftEther TAP can receive. --noipv4ll stops the 169.254
+# fallback from hiding a missed lease.
+exec dhcpcd \
+    --nobackground \
+    --debug \
+    --nohook resolv.conf \
+    --broadcast \
+    --noipv4ll \
+    "$iface"
