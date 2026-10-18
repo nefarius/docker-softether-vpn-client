@@ -29,11 +29,13 @@ if command -v dhclient >/dev/null 2>&1; then
     echo "dhclient must not be installed" >&2
     exit 1
 fi
-dhcpcd --nobackground --debug --nohook resolv.conf --version > /tmp/dhcpcd-probe 2>&1 || true
+dhcpcd --nobackground --debug --nohook resolv.conf --broadcast --noipv4ll --version > /tmp/dhcpcd-probe 2>&1 || true
 grep -F -q "unrecognized option: version" /tmp/dhcpcd-probe
 if grep -F -q "unrecognized option: nobackground" /tmp/dhcpcd-probe \
     || grep -F -q "unrecognized option: debug" /tmp/dhcpcd-probe \
-    || grep -F -q "unrecognized option: nohook" /tmp/dhcpcd-probe
+    || grep -F -q "unrecognized option: nohook" /tmp/dhcpcd-probe \
+    || grep -F -q "unrecognized option: broadcast" /tmp/dhcpcd-probe \
+    || grep -F -q "unrecognized option: noipv4ll" /tmp/dhcpcd-probe
 then
     echo "dhcpcd rejected a required option" >&2
     cat /tmp/dhcpcd-probe >&2

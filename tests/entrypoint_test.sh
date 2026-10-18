@@ -303,6 +303,8 @@ assert_eq "$output" "" "dhcpcd output"
 assert_contains "$DHCP_CASE/dhcp.log" "dhcpcd arg=--nobackground" "dhcpcd was not kept in the foreground"
 assert_contains "$DHCP_CASE/dhcp.log" "dhcpcd arg=--nohook" "dhcpcd hook suppression was not requested"
 assert_contains "$DHCP_CASE/dhcp.log" "dhcpcd arg=resolv.conf" "dhcpcd was allowed to update resolv.conf"
+assert_contains "$DHCP_CASE/dhcp.log" "dhcpcd arg=--broadcast" "dhcpcd did not request a broadcast offer"
+assert_contains "$DHCP_CASE/dhcp.log" "dhcpcd arg=--noipv4ll" "dhcpcd was allowed to fall back to IPv4LL"
 assert_contains "$DHCP_CASE/dhcp.log" "dhcpcd arg=vpn_office" "dhcpcd used the wrong interface"
 pass "dhcpcd starts for an existing adapter"
 
