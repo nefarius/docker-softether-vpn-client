@@ -1,0 +1,20 @@
+version: 2
+
+updates:
+  - package-ecosystem: docker
+    directory: /
+    target-branch: master
+    open-pull-requests-limit: 5
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: master
+    open-pull-requests-limit: 5
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"

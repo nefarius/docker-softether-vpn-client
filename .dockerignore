@@ -1,0 +1,10 @@
+# Build context excludes repository metadata and tests. Runtime assets stay included.
+.git
+.github
+.cursor
+tests
+Makefile
+*.md
+.editorconfig
+.hadolint.yaml
+.shellcheckrc
