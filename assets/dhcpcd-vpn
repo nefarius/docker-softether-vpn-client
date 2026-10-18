@@ -1,0 +1,26 @@
+#!/bin/sh
+set -eu
+
+NET_SYS="${SE_SYS_NET:-/sys/class/net}"
+WAIT_ATTEMPTS="${SE_DHCP_WAIT_ATTEMPTS:-60}"
+WAIT_INTERVAL="${SE_DHCP_WAIT_INTERVAL:-1}"
+
+if [ -z "${SE_NICNAME:-}" ]; then
+    echo "Please provide SE_NICNAME environment variable" >&2
+    exit 1
+fi
+
+iface="vpn_${SE_NICNAME}"
+attempt=0
+while [ ! -d "${NET_SYS}/${iface}" ]; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge "$WAIT_ATTEMPTS" ]; then
+        echo "Timed out waiting for ${iface}" >&2
+        exit 1
+    fi
+    sleep "$WAIT_INTERVAL"
+done
+
+# --nohook resolv.conf keeps VPN DHCP from replacing the container resolv.conf.
+# --nobackground keeps dhcpcd attached to Supervisor.
+exec dhcpcd --nobackground --debug --nohook resolv.conf "$iface"
