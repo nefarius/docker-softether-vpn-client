@@ -71,9 +71,9 @@ if [ "${1:-}" = "supervisord" ]; then
     require_nic "$SE_NICNAME"
 
     case "${SE_TYPE:-}" in
-        standard | radius | cert) ;;
+        standard | radius) ;;
         *)
-            fail "SE_TYPE must be standard, radius, or cert"
+            fail "SE_TYPE must be standard or radius"
             ;;
     esac
 
@@ -108,9 +108,11 @@ if [ "${1:-}" = "supervisord" ]; then
         "/USERNAME:${SE_USERNAME}" \
         "/NICNAME:${SE_NICNAME}"
 
-    vpncmd localhost /CLIENT /CMD AccountPasswordSet "$SE_ACCOUNT_NAME" \
+    if ! vpncmd localhost /CLIENT /CMD AccountPasswordSet "$SE_ACCOUNT_NAME" \
         "/PASSWORD:${SE_PASSWORD}" \
-        "/TYPE:${SE_TYPE}"
+        "/TYPE:${SE_TYPE}" >/dev/null 2>&1; then
+        fail "Failed to set the VPN account password"
+    fi
 
     vpncmd localhost /CLIENT /CMD AccountStartupSet "$SE_ACCOUNT_NAME"
 

@@ -22,7 +22,7 @@ Published images are `containinger/docker-softether-vpn-client`. A stable tag `v
 ## Limitations
 
 - One account and one virtual adapter are supported.
-- `SE_TYPE=cert` is accepted by the setup command, but this image does not install a client certificate. Certificate authentication is unsupported.
+- Certificate authentication is unsupported. `SE_TYPE` accepts only `standard` and `radius`.
 - DHCP responses do not replace `/etc/resolv.conf`. VPN DNS servers are not applied automatically.
 - SoftEther's Linux client does not rewrite the routing table. A route that sends the VPN server itself through the tunnel will black-hole the session.
 - The management port is not published. Do not expose it.
@@ -52,7 +52,7 @@ The container runs as root. Creating the TAP adapter and configuring its address
 | `SE_PASSWORD` | yes | none | Password. No control characters. Visible to `docker inspect` and the process environment. |
 | `SE_ACCOUNT_NAME` | no | `default` | Profile name. No control characters. |
 | `SE_NICNAME` | no | `vpn` | Letters, digits, `_`, and `-`. At most 11 characters. Normalized to lowercase. |
-| `SE_TYPE` | no | `standard` | `standard`, `radius`, or `cert`. Only `standard` and `radius` are supported. |
+| `SE_TYPE` | no | `standard` | `standard` or `radius`. |
 
 The Linux adapter name is `vpn_` plus the normalized NIC name. The default adapter is `vpn_vpn`.
 
@@ -68,7 +68,7 @@ docker run --name docker-softether-vpn-client \
     -e SE_SERVER=vpn.example.net:443 \
     -e SE_HUB=TheHub \
     -e SE_USERNAME=vpnuser \
-    -e SE_PASSWORD=Sup3rS3cr3t \
+    -e SE_PASSWORD="${SE_PASSWORD:?Set SE_PASSWORD from your secret store}" \
     -d containinger/docker-softether-vpn-client:1.0.0
 ```
 
@@ -89,7 +89,7 @@ services:
       SE_SERVER: vpn.example.net:443
       SE_HUB: TheHub
       SE_USERNAME: vpnuser
-      SE_PASSWORD: Sup3rS3cr3t
+      SE_PASSWORD: ${SE_PASSWORD:?Set SE_PASSWORD from your secret store}
     restart: unless-stopped
 ```
 
@@ -110,7 +110,7 @@ services:
       SE_SERVER: vpn.example.net:443
       SE_HUB: TheHub
       SE_USERNAME: vpnuser
-      SE_PASSWORD: Sup3rS3cr3t
+      SE_PASSWORD: ${SE_PASSWORD:?Set SE_PASSWORD from your secret store}
     ports:
       - "8080:8080"
     restart: unless-stopped
@@ -121,8 +121,6 @@ services:
     depends_on:
       - vpnclient
     network_mode: service:vpnclient
-    cap_add:
-      - NET_ADMIN
     volumes:
       - ./config:/config
     restart: unless-stopped

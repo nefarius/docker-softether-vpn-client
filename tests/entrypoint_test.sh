@@ -71,6 +71,11 @@ log="${MOCK_LOG:?}"
     done
 } >> "$log"
 if [ "${VPNCMD_FAIL_COMMAND:-}" = "$4" ]; then
+    printf 'vpncmd failed:'
+    for arg in "$@"; do
+        printf ' %s' "$arg"
+    done
+    printf '\n'
     exit 1
 fi
 exit 0
@@ -153,10 +158,10 @@ done
 
 new_case
 base_env
-SE_TYPE="plain"
+SE_TYPE="cert"
 run_setup
 assert_eq "$status" "1" "invalid SE_TYPE status"
-printf '%s\n' "$output" | grep -F -q "SE_TYPE must be standard, radius, or cert" || fail "invalid SE_TYPE message"
+printf '%s\n' "$output" | grep -F -q "SE_TYPE must be standard or radius" || fail "invalid SE_TYPE message"
 pass "invalid SE_TYPE"
 
 new_case
@@ -233,6 +238,19 @@ assert_eq "$status" "1" "setup failure status"
 assert_contains "$MOCK_LOG" "vpnclient arg=start" "failed setup did not start the client"
 assert_contains "$MOCK_LOG" "vpnclient arg=stop" "failed setup did not stop the client"
 pass "setup failure cleanup"
+
+new_case
+base_env
+SE_PASSWORD="visible-secret-value"
+VPNCMD_FAIL_COMMAND="AccountPasswordSet"
+run_setup
+assert_eq "$status" "1" "password failure status"
+printf '%s\n' "$output" | grep -F -q "Failed to set the VPN account password" || fail "password failure message"
+if printf '%s\n' "$output" | grep -F -q "visible-secret-value"; then
+    fail "password failure exposed SE_PASSWORD"
+fi
+assert_contains "$MOCK_LOG" "vpnclient arg=stop" "password failure did not stop the client"
+pass "password failure hides the password"
 
 new_case
 base_env
