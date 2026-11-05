@@ -86,6 +86,7 @@ EOF
 log="${MOCK_LOG:?}"
 {
     printf 'supervisord argc=%s\n' "$#"
+    printf 'supervisord env SE_DNS_ENABLED=%s\n' "${SE_DNS_ENABLED-unset}"
     for arg in "$@"; do
         printf 'supervisord arg=%s\n' "$arg"
     done
@@ -95,6 +96,11 @@ EOF
     chmod 755 "$CASE/bin/supervisord"
     printf '  eth0: 0\n' > "$CASE/netdev"
     printf 'placeholder\n' > "$CASE/client/vpn_client.config"
+    SE_RESOLV_CONF="$CASE/resolv.conf"
+    SE_DNSMASQ_CONF="$CASE/dnsmasq.conf"
+    SE_DNS_RUN_DIR="$CASE/run"
+    SE_DNS_STATE_DIR="$CASE/state"
+    printf 'nameserver 127.0.0.11\noptions ndots:0\n' > "$SE_RESOLV_CONF"
 }
 
 run_entry() {
@@ -114,6 +120,15 @@ run_entry() {
         SE_ACCOUNT_NAME="${SE_ACCOUNT_NAME-default}" \
         SE_NICNAME="${SE_NICNAME-vpn}" \
         SE_TYPE="${SE_TYPE-standard}" \
+        SE_DNS_DOMAINS="${SE_DNS_DOMAINS-}" \
+        SE_DNS_SERVERS="${SE_DNS_SERVERS-}" \
+        SE_DNS_SEARCH="${SE_DNS_SEARCH-}" \
+        SE_MAC_ADDRESS="${SE_MAC_ADDRESS-}" \
+        SE_DHCP_HOSTNAME="${SE_DHCP_HOSTNAME-}" \
+        SE_RESOLV_CONF="${SE_RESOLV_CONF-}" \
+        SE_DNSMASQ_CONF="${SE_DNSMASQ_CONF-}" \
+        SE_DNS_RUN_DIR="${SE_DNS_RUN_DIR-}" \
+        SE_DNS_STATE_DIR="${SE_DNS_STATE_DIR-}" \
         sh "$ENTRYPOINT" "$@"
 }
 
@@ -132,6 +147,11 @@ base_env() {
     SE_TYPE="standard"
     SE_READY_ATTEMPTS=5
     VPNCMD_FAIL_COMMAND=""
+    SE_DNS_DOMAINS=""
+    SE_DNS_SERVERS=""
+    SE_DNS_SEARCH=""
+    SE_MAC_ADDRESS=""
+    SE_DHCP_HOSTNAME=""
 }
 
 new_case
@@ -224,6 +244,8 @@ assert_contains "$MOCK_LOG" "vpncmd arg=/HUB:The Hub" "hub argument was split"
 assert_contains "$MOCK_LOG" "vpncmd arg=/PASSWORD:secret \$(touch ${CASE}/pwned) and spaces" "password was not passed literally"
 assert_contains "$MOCK_LOG" "vpncmd arg=/TYPE:standard" "password type was not set"
 assert_contains "$MOCK_LOG" "vpncmd arg=AccountStartupSet" "auto-connect was not set"
+assert_not_contains "$MOCK_LOG" "vpncmd arg=NicSetSetting" "MAC setting was applied without SE_MAC_ADDRESS"
+assert_contains "$MOCK_LOG" "supervisord env SE_DNS_ENABLED=false" "split DNS was enabled by default"
 assert_contains "$MOCK_LOG" "vpnclient arg=stop" "client was not stopped before exec"
 assert_contains "$MOCK_LOG" "supervisord arg=-c" "supervisord was not executed"
 assert_contains "$MOCK_LOG" "supervisord arg=/etc/supervisord.conf" "supervisord configuration was not preserved"
@@ -306,6 +328,8 @@ assert_contains "$DHCP_CASE/dhcp.log" "dhcpcd arg=resolv.conf" "dhcpcd was allow
 assert_contains "$DHCP_CASE/dhcp.log" "dhcpcd arg=--broadcast" "dhcpcd did not request a broadcast offer"
 assert_contains "$DHCP_CASE/dhcp.log" "dhcpcd arg=--noipv4ll" "dhcpcd was allowed to fall back to IPv4LL"
 assert_contains "$DHCP_CASE/dhcp.log" "dhcpcd arg=vpn_office" "dhcpcd used the wrong interface"
+assert_contains "$DHCP_CASE/dhcp.log" "dhcpcd arg=-f" "dhcpcd was not given a config file"
+assert_contains "$DHCP_CASE/dhcp.log" "dhcpcd arg=/etc/dhcpcd-vpn-duid.conf" "dhcpcd did not keep the DUID client identifier"
 pass "dhcpcd starts for an existing adapter"
 
 status=0
@@ -332,5 +356,501 @@ output="$(
 assert_eq "$status" "1" "dhcp wait status"
 printf '%s\n' "$output" | grep -F -q "Timed out waiting for vpn_missing" || fail "dhcp wait message"
 pass "dhcpcd waits for the adapter"
+
+: > "$DHCP_CASE/dhcp.log"
+status=0
+output="$(
+    env PATH="$DHCP_CASE/bin:/usr/bin:/bin" \
+        MOCK_LOG="$DHCP_CASE/dhcp.log" \
+        SE_SYS_NET="$DHCP_CASE/sys" \
+        SE_NICNAME="office" \
+        SE_DHCP_HOSTNAME="vps-services" \
+        SE_DHCP_WAIT_ATTEMPTS=2 \
+        SE_DHCP_WAIT_INTERVAL=0 \
+        sh "$DHCPCD" 2>&1
+)" || status=$?
+assert_eq "$status" "0" "dhcpcd hostname status"
+assert_contains "$DHCP_CASE/dhcp.log" "dhcpcd arg=--hostname=vps-services" "dhcpcd was not given the hostname"
+assert_contains "$DHCP_CASE/dhcp.log" "dhcpcd arg=/etc/dhcpcd-vpn-duid.conf" "hostname request changed the client identifier"
+pass "dhcpcd sends the configured hostname"
+
+cat > "$DHCP_CASE/bin/ip" <<'EOF'
+#!/bin/sh
+log="${MOCK_LOG:?}"
+{
+    printf 'ip argc=%s\n' "$#"
+    for arg in "$@"; do
+        printf 'ip arg=%s\n' "$arg"
+    done
+} >> "$log"
+exit 0
+EOF
+chmod 755 "$DHCP_CASE/bin/ip"
+printf '00:11:22:33:44:55\n' > "$DHCP_CASE/sys/vpn_office/address"
+: > "$DHCP_CASE/dhcp.log"
+status=0
+output="$(
+    env PATH="$DHCP_CASE/bin:/usr/bin:/bin" \
+        MOCK_LOG="$DHCP_CASE/dhcp.log" \
+        SE_SYS_NET="$DHCP_CASE/sys" \
+        SE_NICNAME="office" \
+        SE_MAC_LINUX="aa:bb:cc:dd:ee:02" \
+        SE_DHCP_WAIT_ATTEMPTS=2 \
+        SE_DHCP_WAIT_INTERVAL=0 \
+        sh "$DHCPCD" 2>&1
+)" || status=$?
+assert_eq "$status" "0" "dhcpcd mac fallback status"
+assert_contains "$DHCP_CASE/dhcp.log" "ip arg=down" "adapter was not brought down before the MAC change"
+assert_contains "$DHCP_CASE/dhcp.log" "ip arg=aa:bb:cc:dd:ee:02" "fallback MAC was not applied"
+assert_contains "$DHCP_CASE/dhcp.log" "ip arg=up" "adapter was not brought back up"
+assert_contains "$DHCP_CASE/dhcp.log" "dhcpcd arg=/etc/dhcpcd-vpn.conf" "fixed MAC did not select the clientid configuration"
+pass "dhcpcd applies a fixed MAC before requesting a lease"
+
+printf 'aa:bb:cc:dd:ee:02\n' > "$DHCP_CASE/sys/vpn_office/address"
+: > "$DHCP_CASE/dhcp.log"
+status=0
+output="$(
+    env PATH="$DHCP_CASE/bin:/usr/bin:/bin" \
+        MOCK_LOG="$DHCP_CASE/dhcp.log" \
+        SE_SYS_NET="$DHCP_CASE/sys" \
+        SE_NICNAME="office" \
+        SE_MAC_LINUX="aa:bb:cc:dd:ee:02" \
+        SE_DHCP_WAIT_ATTEMPTS=2 \
+        SE_DHCP_WAIT_INTERVAL=0 \
+        sh "$DHCPCD" 2>&1
+)" || status=$?
+assert_eq "$status" "0" "dhcpcd matching mac status"
+assert_not_contains "$DHCP_CASE/dhcp.log" "ip arg=address" "matching MAC was changed again"
+pass "dhcpcd leaves a matching MAC in place"
+
+new_case
+base_env
+before="$(cat "$SE_RESOLV_CONF")"
+run_setup
+assert_eq "$status" "0" "dns disabled status"
+assert_eq "$(cat "$SE_RESOLV_CONF")" "$before" "disabled split DNS changed resolv.conf"
+test ! -e "$SE_DNSMASQ_CONF" || fail "disabled split DNS wrote a dnsmasq config"
+assert_contains "$MOCK_LOG" "supervisord env SE_DNS_ENABLED=false" "disabled split DNS exported the wrong flag"
+pass "split DNS disabled leaves resolv.conf unchanged"
+
+new_case
+base_env
+printf 'nameserver 127.0.0.11\nnameserver 10.4.4.4\nsearch svc.cluster.local\noptions ndots:0\n' > "$SE_RESOLV_CONF"
+SE_DNS_DOMAINS="lan,home.arpa,1.168.192.in-addr.arpa"
+SE_DNS_SEARCH="lan"
+run_setup
+assert_eq "$status" "0" "split DNS status"
+printf '%s\n' "$output" | grep -F -q "Split DNS enabled for lan,home.arpa,1.168.192.in-addr.arpa" || fail "split DNS was not announced"
+assert_eq "$(cat "$SE_RESOLV_CONF")" "# softether-split-dns
+nameserver 127.0.0.1
+search lan
+options ndots:0" "split DNS resolv.conf"
+assert_eq "$(cat "$SE_DNS_STATE_DIR/upstream.conf")" "nameserver 127.0.0.11
+nameserver 10.4.4.4
+search svc.cluster.local
+options ndots:0" "saved upstream resolvers"
+assert_eq "$(cat "$SE_DNSMASQ_CONF")" "no-resolv
+listen-address=127.0.0.1
+bind-interfaces
+port=53
+no-hosts
+clear-on-reload
+server=127.0.0.11
+server=10.4.4.4
+servers-file=${SE_DNS_RUN_DIR}/servers.conf" "dnsmasq configuration"
+assert_eq "$(cat "$SE_DNS_RUN_DIR/servers.conf")" "server=/lan/
+server=/home.arpa/
+server=/1.168.192.in-addr.arpa/" "local-only domain seed"
+assert_contains "$MOCK_LOG" "supervisord env SE_DNS_ENABLED=true" "split DNS was not enabled for Supervisor"
+pass "split DNS captures upstream resolvers"
+
+new_case
+base_env
+mkdir -p "$SE_DNS_STATE_DIR"
+printf 'nameserver 10.1.2.3\noptions ndots:0\n' > "$SE_DNS_STATE_DIR/upstream.conf"
+printf '# softether-split-dns\nnameserver 127.0.0.1\nsearch lan\noptions ndots:0\n' > "$SE_RESOLV_CONF"
+SE_DNS_DOMAINS="lan"
+run_setup
+assert_eq "$status" "0" "split DNS restart status"
+assert_contains "$SE_DNSMASQ_CONF" "server=10.1.2.3" "restart did not reuse the saved upstream"
+assert_not_contains "$SE_DNSMASQ_CONF" "server=127.0.0.1" "restart forwarded DNS to dnsmasq itself"
+pass "split DNS reuses the saved upstream on restart"
+
+new_case
+base_env
+SE_DNS_DOMAINS="lan"
+SE_DNS_SERVERS="192.168.1.1,10.0.0.53"
+run_setup
+assert_eq "$status" "0" "static DNS status"
+assert_eq "$(cat "$SE_DNS_RUN_DIR/servers.conf")" "server=/lan/192.168.1.1
+server=/lan/10.0.0.53" "static home DNS servers"
+pass "split DNS can use static home DNS servers"
+
+new_case
+base_env
+mkdir -p "$SE_DNS_STATE_DIR"
+printf 'nameserver 10.9.8.7\nsearch office.lan\noptions ndots:1\n' > "$SE_DNS_STATE_DIR/upstream.conf"
+printf '# softether-split-dns\nnameserver 127.0.0.1\nsearch lan\n' > "$SE_RESOLV_CONF"
+run_setup
+assert_eq "$status" "0" "split DNS restore status"
+printf '%s\n' "$output" | grep -F -q "Split DNS disabled; restored upstream resolvers" || fail "split DNS restore was not announced"
+assert_eq "$(cat "$SE_RESOLV_CONF")" "nameserver 10.9.8.7
+search office.lan
+options ndots:1" "restored resolv.conf"
+assert_contains "$MOCK_LOG" "supervisord env SE_DNS_ENABLED=false" "restored split DNS stayed enabled"
+pass "disabling split DNS restores the upstream resolv.conf"
+
+for invalid_dns in \
+    "SE_DNS_DOMAINS=bad_name|SE_DNS_DOMAINS contains unsupported characters" \
+    "SE_DNS_DOMAINS=-bad.lan|SE_DNS_DOMAINS contains unsupported characters" \
+    "SE_DNS_SERVERS=10.0.0.256|SE_DNS_DOMAINS=lan|SE_DNS_SERVERS contains an invalid IPv4 address" \
+    "SE_DNS_SERVERS=not-an-ip|SE_DNS_DOMAINS=lan|SE_DNS_SERVERS contains an invalid IPv4 address" \
+    "SE_DNS_SEARCH=lan|SE_DNS_DOMAINS is required when SE_DNS_SERVERS or SE_DNS_SEARCH is set"
+do
+    new_case
+    base_env
+    message=${invalid_dns##*|}
+    assignments=${invalid_dns%|*}
+    rest=$assignments
+    while [ -n "$rest" ]; do
+        case "$rest" in
+            *\|*)
+                assignment=${rest%%|*}
+                rest=${rest#*|}
+                ;;
+            *)
+                assignment=$rest
+                rest=
+                ;;
+        esac
+        eval "$assignment"
+    done
+    run_setup
+    assert_eq "$status" "1" "invalid DNS status for ${message}"
+    printf '%s\n' "$output" | grep -F -q "$message" || fail "invalid DNS message: ${message}"
+    assert_not_contains "$MOCK_LOG" "vpnclient arg=start" "invalid DNS started the client"
+    pass "rejects ${message}"
+done
+
+new_case
+base_env
+rm -f "$SE_RESOLV_CONF"
+SE_DNS_DOMAINS="lan"
+run_setup
+assert_eq "$status" "1" "missing resolv.conf status"
+printf '%s\n' "$output" | grep -F -q "Resolver file ${SE_RESOLV_CONF} is not available" || fail "missing resolv.conf message"
+assert_not_contains "$MOCK_LOG" "vpnclient arg=start" "missing resolv.conf started the client"
+pass "split DNS requires resolv.conf"
+
+new_case
+base_env
+printf '# softether-split-dns\nnameserver 127.0.0.1\n' > "$SE_RESOLV_CONF"
+SE_DNS_DOMAINS="lan"
+run_setup
+assert_eq "$status" "1" "missing upstream state status"
+printf '%s\n' "$output" | grep -F -q "Split DNS upstream servers were not saved" || fail "missing upstream state message"
+pass "split DNS requires the saved upstream"
+
+new_case
+base_env
+printf 'nameserver 127.0.0.1\n' > "$SE_RESOLV_CONF"
+SE_DNS_DOMAINS="lan"
+run_setup
+assert_eq "$status" "1" "looping upstream status"
+printf '%s\n' "$output" | grep -F -q "Refusing to use 127.0.0.1 as an upstream DNS server" || fail "looping upstream message"
+pass "split DNS rejects a loop back to itself"
+
+new_case
+base_env
+SE_MAC_ADDRESS="aa:bb:cc:dd:ee:02"
+run_setup
+assert_eq "$status" "0" "MAC setup status"
+assert_contains "$MOCK_LOG" "vpncmd arg=NicSetSetting" "NicSetSetting was not called"
+assert_contains "$MOCK_LOG" "vpncmd arg=/MAC:AA-BB-CC-DD-EE-02" "MAC was not normalized for SoftEther"
+printf '%s\n' "$output" | grep -F -q "VPN adapter MAC address set to AA-BB-CC-DD-EE-02" || fail "MAC was not announced"
+pass "SE_MAC_ADDRESS is applied to the adapter"
+
+new_case
+base_env
+SE_MAC_ADDRESS="AA-BB-CC-DD-EE-02"
+run_setup
+assert_eq "$status" "0" "dashed MAC status"
+assert_contains "$MOCK_LOG" "vpncmd arg=/MAC:AA-BB-CC-DD-EE-02" "dashed MAC was not normalized"
+pass "SE_MAC_ADDRESS accepts dashed uppercase input"
+
+for invalid_mac in \
+    "01:02:03:04:05:06|SE_MAC_ADDRESS must be a unicast address" \
+    "ff:ff:ff:ff:ff:ff|SE_MAC_ADDRESS must be a unicast address" \
+    "00:00:00:00:00:00|SE_MAC_ADDRESS must not be the all-zero address" \
+    "aa:bb:cc:dd:ee|SE_MAC_ADDRESS contains unsupported characters"
+do
+    new_case
+    base_env
+    SE_MAC_ADDRESS=${invalid_mac%%|*}
+    message=${invalid_mac#*|}
+    run_setup
+    assert_eq "$status" "1" "invalid MAC status for ${message}"
+    printf '%s\n' "$output" | grep -F -q "$message" || fail "invalid MAC message: ${message}"
+    assert_not_contains "$MOCK_LOG" "vpnclient arg=start" "invalid MAC started the client"
+    pass "rejects ${message}"
+done
+
+new_case
+base_env
+SE_DHCP_HOSTNAME="vps-services"
+run_setup
+assert_eq "$status" "0" "hostname setup status"
+pass "SE_DHCP_HOSTNAME accepts a single label"
+
+for invalid_host in \
+    "not_a_host|SE_DHCP_HOSTNAME contains unsupported characters" \
+    "-bad|SE_DHCP_HOSTNAME contains unsupported characters" \
+    "bad-|SE_DHCP_HOSTNAME contains unsupported characters" \
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|SE_DHCP_HOSTNAME must be a single label of 1 to 63 characters"
+do
+    new_case
+    base_env
+    SE_DHCP_HOSTNAME=${invalid_host%%|*}
+    message=${invalid_host#*|}
+    run_setup
+    assert_eq "$status" "1" "invalid hostname status for ${message}"
+    printf '%s\n' "$output" | grep -F -q "$message" || fail "invalid hostname message: ${message}"
+    assert_not_contains "$MOCK_LOG" "vpnclient arg=start" "invalid hostname started the client"
+    pass "rejects ${message}"
+done
+
+HOOK="${ROOT}/assets/dhcpcd-exit-hook"
+HOOK_CASE="$TMP/hook"
+mkdir -p "$HOOK_CASE/bin" "$HOOK_CASE/run"
+cat > "$HOOK_CASE/bin/pkill" <<'EOF'
+#!/bin/sh
+log="${MOCK_LOG:?}"
+{
+    printf 'pkill argc=%s\n' "$#"
+    for arg in "$@"; do
+        printf 'pkill arg=%s\n' "$arg"
+    done
+} >> "$log"
+exit "${PKILL_STATUS:-0}"
+EOF
+chmod 755 "$HOOK_CASE/bin/pkill"
+
+run_hook() {
+    env \
+        PATH="$HOOK_CASE/bin:/usr/bin:/bin" \
+        MOCK_LOG="$HOOK_CASE/pkill.log" \
+        PKILL_STATUS="${PKILL_STATUS:-0}" \
+        SE_DNS_DOMAINS="${SE_DNS_DOMAINS-}" \
+        SE_DNS_SERVERS="${SE_DNS_SERVERS-}" \
+        SE_NICNAME="${SE_NICNAME-vpn}" \
+        SE_DNS_RUN_DIR="$HOOK_CASE/run" \
+        interface="${interface-}" \
+        reason="${reason-}" \
+        new_domain_name_servers="${new_domain_name_servers-}" \
+        sh -c ". \"\$1\"; printf '%s\n' hook-returned" _ "$HOOK"
+}
+
+: > "$HOOK_CASE/pkill.log"
+SE_DNS_DOMAINS=""
+SE_DNS_SERVERS=""
+interface="vpn_vpn"
+reason="BOUND"
+new_domain_name_servers="192.168.1.1"
+status=0
+output="$(run_hook 2>&1)" || status=$?
+assert_eq "$status" "0" "idle hook status"
+assert_eq "$output" "hook-returned" "idle hook did not return to dhcpcd"
+test ! -e "$HOOK_CASE/run/servers.conf" || fail "idle hook wrote a servers file"
+assert_eq "$(wc -c < "$HOOK_CASE/pkill.log" | tr -d ' ')" "0" "idle hook reloaded dnsmasq"
+pass "DHCP hook does nothing unless split DNS is enabled"
+
+SE_DNS_DOMAINS="lan,home.arpa"
+SE_DNS_SERVERS=""
+interface="vpn_vpn"
+reason="BOUND"
+new_domain_name_servers="192.168.1.1 10.0.0.53"
+: > "$HOOK_CASE/pkill.log"
+status=0
+output="$(run_hook 2>&1)" || status=$?
+assert_eq "$status" "0" "bound hook status"
+assert_eq "$output" "hook-returned" "bound hook did not return to dhcpcd"
+assert_eq "$(cat "$HOOK_CASE/run/servers.conf")" "server=/lan/192.168.1.1
+server=/lan/10.0.0.53
+server=/home.arpa/192.168.1.1
+server=/home.arpa/10.0.0.53" "bound hook servers file"
+assert_contains "$HOOK_CASE/pkill.log" "pkill arg=-HUP" "bound hook did not reload dnsmasq"
+assert_contains "$HOOK_CASE/pkill.log" "pkill arg=dnsmasq" "bound hook signalled the wrong process"
+pass "DHCP hook forwards VPN domains to the leased DNS servers"
+
+reason="RENEW"
+new_domain_name_servers="192.168.1.1"
+: > "$HOOK_CASE/pkill.log"
+status=0
+output="$(run_hook 2>&1)" || status=$?
+assert_eq "$status" "0" "renew hook status"
+assert_eq "$(cat "$HOOK_CASE/run/servers.conf")" "server=/lan/192.168.1.1
+server=/home.arpa/192.168.1.1" "renew hook servers file"
+pass "DHCP hook updates servers when the lease is renewed"
+
+for drop_reason in EXPIRE RELEASE NOCARRIER STOP; do
+    reason="$drop_reason"
+    new_domain_name_servers="192.168.1.1"
+    : > "$HOOK_CASE/pkill.log"
+    status=0
+    output="$(run_hook 2>&1)" || status=$?
+    assert_eq "$status" "0" "${drop_reason} hook status"
+    assert_eq "$(cat "$HOOK_CASE/run/servers.conf")" "server=/lan/
+server=/home.arpa/" "${drop_reason} hook did not stop forwarding"
+    pass "DHCP hook stops forwarding on ${drop_reason}"
+done
+
+printf 'untouched\n' > "$HOOK_CASE/run/servers.conf"
+interface="eth0"
+reason="BOUND"
+new_domain_name_servers="192.168.1.1"
+: > "$HOOK_CASE/pkill.log"
+status=0
+output="$(run_hook 2>&1)" || status=$?
+assert_eq "$status" "0" "other interface hook status"
+assert_eq "$(cat "$HOOK_CASE/run/servers.conf")" "untouched" "other interface changed the servers file"
+assert_eq "$(wc -c < "$HOOK_CASE/pkill.log" | tr -d ' ')" "0" "other interface reloaded dnsmasq"
+pass "DHCP hook ignores other interfaces"
+
+printf 'static\n' > "$HOOK_CASE/run/servers.conf"
+interface="vpn_vpn"
+reason="BOUND"
+SE_DNS_SERVERS="192.168.1.1"
+new_domain_name_servers="10.0.0.53"
+: > "$HOOK_CASE/pkill.log"
+status=0
+output="$(run_hook 2>&1)" || status=$?
+assert_eq "$status" "0" "static hook status"
+assert_eq "$(cat "$HOOK_CASE/run/servers.conf")" "static" "static servers were replaced by the lease"
+pass "DHCP hook keeps static home DNS servers"
+
+SE_DNS_SERVERS=""
+reason="BOUND"
+new_domain_name_servers=""
+status=0
+output="$(run_hook 2>&1)" || status=$?
+assert_eq "$status" "0" "empty lease DNS status"
+assert_eq "$(cat "$HOOK_CASE/run/servers.conf")" "server=/lan/
+server=/home.arpa/" "empty lease DNS kept forwarding"
+pass "DHCP hook does not forward when the lease has no DNS servers"
+
+reason="BOUND"
+new_domain_name_servers="not-an-ip 192.168.1.9"
+status=0
+output="$(run_hook 2>&1)" || status=$?
+assert_eq "$status" "0" "mixed lease DNS status"
+assert_eq "$(cat "$HOOK_CASE/run/servers.conf")" "server=/lan/192.168.1.9
+server=/home.arpa/192.168.1.9" "invalid lease DNS server was forwarded"
+pass "DHCP hook ignores a non-address DNS server"
+
+PKILL_STATUS=1
+reason="BOUND"
+new_domain_name_servers="192.168.1.1"
+status=0
+output="$(run_hook 2>&1)" || status=$?
+assert_eq "$status" "0" "pkill failure status"
+assert_eq "$output" "hook-returned" "pkill failure aborted dhcpcd"
+PKILL_STATUS=0
+pass "DHCP hook ignores a missing dnsmasq process"
+
+SPLIT="${ROOT}/assets/dns-split"
+SPLIT_CASE="$TMP/split"
+mkdir -p "$SPLIT_CASE/bin"
+cat > "$SPLIT_CASE/bin/sleep" <<'EOF'
+#!/bin/sh
+log="${MOCK_LOG:?}"
+{
+    printf 'sleep argc=%s\n' "$#"
+    for arg in "$@"; do
+        printf 'sleep arg=%s\n' "$arg"
+    done
+} >> "$log"
+exit 0
+EOF
+cat > "$SPLIT_CASE/bin/dnsmasq" <<'EOF'
+#!/bin/sh
+log="${MOCK_LOG:?}"
+{
+    printf 'dnsmasq argc=%s\n' "$#"
+    for arg in "$@"; do
+        printf 'dnsmasq arg=%s\n' "$arg"
+    done
+} >> "$log"
+exit 0
+EOF
+chmod 755 "$SPLIT_CASE/bin/sleep" "$SPLIT_CASE/bin/dnsmasq"
+: > "$SPLIT_CASE/log"
+status=0
+output="$(
+    env PATH="$SPLIT_CASE/bin:/usr/bin:/bin" \
+        MOCK_LOG="$SPLIT_CASE/log" \
+        SE_DNS_ENABLED="false" \
+        sh "$SPLIT" 2>&1
+)" || status=$?
+assert_eq "$status" "0" "disabled dns-split status"
+assert_eq "$output" "" "disabled dns-split output"
+assert_contains "$SPLIT_CASE/log" "sleep arg=infinity" "disabled split DNS did not stay idle"
+assert_not_contains "$SPLIT_CASE/log" "dnsmasq arg=--keep-in-foreground" "disabled split DNS started dnsmasq"
+pass "dns-split stays idle when split DNS is disabled"
+
+: > "$SPLIT_CASE/log"
+status=0
+output="$(
+    env PATH="$SPLIT_CASE/bin:/usr/bin:/bin" \
+        MOCK_LOG="$SPLIT_CASE/log" \
+        SE_DNS_ENABLED="true" \
+        SE_DNSMASQ_BIN="$SPLIT_CASE/bin/dnsmasq" \
+        SE_DNSMASQ_CONF="/etc/dnsmasq.d/softether.conf" \
+        sh "$SPLIT" 2>&1
+)" || status=$?
+assert_eq "$status" "0" "enabled dns-split status"
+assert_contains "$SPLIT_CASE/log" "dnsmasq arg=--keep-in-foreground" "dnsmasq was not kept in the foreground"
+assert_contains "$SPLIT_CASE/log" "dnsmasq arg=--log-facility=-" "dnsmasq was not told to log to stderr"
+assert_contains "$SPLIT_CASE/log" "dnsmasq arg=--conf-file=/etc/dnsmasq.d/softether.conf" "dnsmasq config path was wrong"
+assert_not_contains "$SPLIT_CASE/log" "sleep arg=infinity" "enabled split DNS stayed idle"
+pass "dns-split starts dnsmasq when split DNS is enabled"
+
+GEN_MAC="${ROOT}/assets/gen-mac"
+
+expect_mac() {
+    entropy=$1
+    expected=$2
+    status=0
+    output="$(SE_MAC_ENTROPY="$entropy" sh "$GEN_MAC" 2>&1)" || status=$?
+    assert_eq "$status" "0" "gen-mac status for ${entropy}"
+    assert_eq "$output" "$expected" "gen-mac output for ${entropy}"
+}
+
+expect_mac "00 11 22 33 44 55" "02:11:22:33:44:55"
+expect_mac "01 aa bb cc dd ee" "02:aa:bb:cc:dd:ee"
+expect_mac "04 00 00 00 00 01" "06:00:00:00:00:01"
+expect_mac "a5 10 20 30 40 50" "a6:10:20:30:40:50"
+expect_mac "0b ff ff ff ff ff" "0a:ff:ff:ff:ff:ff"
+expect_mac "fe 01 02 03 04 05" "fe:01:02:03:04:05"
+expect_mac "FF FF FF FF FF FF" "fe:ff:ff:ff:ff:ff"
+pass "gen-mac forces a locally administered unicast address"
+
+status=0
+output="$(SE_MAC_ENTROPY="00 11 22 33 44" sh "$GEN_MAC" 2>&1)" || status=$?
+assert_eq "$status" "1" "short gen-mac entropy status"
+printf '%s\n' "$output" | grep -F -q "Could not read 6 random bytes" || fail "short gen-mac entropy message"
+pass "gen-mac rejects a short entropy string"
+
+i=0
+while [ "$i" -lt 20 ]; do
+    i=$((i + 1))
+    output="$(sh "$GEN_MAC")"
+    case "$output" in
+        [0-9a-f][26ae]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]) ;;
+        *)
+            fail "gen-mac printed an incompatible address: ${output}"
+            ;;
+    esac
+done
+pass "gen-mac prints a compatible random address"
 
 printf '%s tests passed\n' "$PASS"

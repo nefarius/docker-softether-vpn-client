@@ -17,13 +17,22 @@ Published images are `containinger/docker-softether-vpn-client`. A stable tag `v
 - Recreates the client profile on every start, so changed credentials take effect after a restart.
 - Marks the account for automatic connection.
 - Runs the client and DHCP client under Supervisor, with both logging to container stdout.
+- Optional split DNS. Names under `SE_DNS_DOMAINS` go to the home DNS servers; every other name keeps the resolver Docker configured for the container.
+- Optional fixed adapter MAC address and DHCP hostname, so a home router can reserve an address and publish a name.
 - Builds `linux/amd64` and `linux/arm64` from Alpine 3.24.
 
 ## Limitations
 
 - One account and one virtual adapter are supported.
 - Certificate authentication is unsupported. `SE_TYPE` accepts only `standard` and `radius`.
-- DHCP responses do not replace `/etc/resolv.conf`. VPN DNS servers are not applied automatically.
+- Without `SE_DNS_DOMAINS`, DHCP DNS servers are not written to `/etc/resolv.conf`.
+- Split DNS forwards to IPv4 home DNS servers. IPv6 addresses in the VPN lease are ignored.
+- Split DNS does not change the host resolver. It applies to processes in the VPN container network namespace, including companions started with `network_mode: service:`.
+- While split DNS is enabled, dnsmasq binds `127.0.0.1:53` in that namespace. Another DNS server cannot bind the same address.
+- Names under `SE_DNS_DOMAINS` fail until the VPN lease provides DNS servers, unless `SE_DNS_SERVERS` is set. Other names continue to use the saved upstream resolvers.
+- A restart reuses the upstream resolvers captured the first time split DNS was enabled. Recreate the container after changing Docker's DNS configuration.
+- Publishing a container into the home LAN requires a SoftEther hub bridged to that LAN. SecureNAT does not place the client on the LAN.
+- Without `SE_MAC_ADDRESS`, dhcpcd keeps identifying the client with a DUID. The adapter MAC is generated again whenever the client profile is recreated, so a DHCP reservation needs the fixed address.
 - SoftEther's Linux client does not rewrite the routing table. A route that sends the VPN server itself through the tunnel will black-hole the session.
 - The management port is not published. Do not expose it.
 - There is no image health check. A running Supervisor process does not prove that the VPN session is up.
@@ -53,6 +62,11 @@ The container runs as root. Creating the TAP adapter and configuring its address
 | `SE_ACCOUNT_NAME` | no | `default` | Profile name. No control characters. |
 | `SE_NICNAME` | no | `vpn` | Letters, digits, `_`, and `-`. At most 11 characters. Normalized to lowercase. |
 | `SE_TYPE` | no | `standard` | `standard` or `radius`. |
+| `SE_DNS_DOMAINS` | no | unset | Comma-separated domains resolved through the home DNS servers, for example `lan,home.arpa,1.168.192.in-addr.arpa`. No spaces. Setting it enables split DNS. |
+| `SE_DNS_SERVERS` | no | VPN lease | Comma-separated IPv4 addresses of the home DNS servers. No spaces. When unset, the servers come from DHCP option 6 on the VPN adapter. |
+| `SE_DNS_SEARCH` | no | previous search list | Comma-separated search domains written to `/etc/resolv.conf`. No spaces. |
+| `SE_MAC_ADDRESS` | no | generated | Locally administered unicast MAC address, with `:` or `-` separators. Multicast and all-zero addresses are rejected. `gen-mac` prints a usable value. |
+| `SE_DHCP_HOSTNAME` | no | unset | One DNS label, 1 to 63 characters. Sent as DHCP option 12. |
 
 The Linux adapter name is `vpn_` plus the normalized NIC name. The default adapter is `vpn_vpn`.
 
@@ -126,6 +140,81 @@ services:
     restart: unless-stopped
 ```
 
+### Resolve home LAN names
+
+`SE_DNS_DOMAINS` sends those names to the DNS servers learned from the VPN lease. Include the reverse zone when reverse lookups should take the same path: `1.168.192.in-addr.arpa` is the zone for `192.168.1.0/24`. `SE_DNS_SEARCH` lets a short name such as `ps5-shalltear` resolve as `ps5-shalltear.lan`. Set `SE_DNS_SERVERS` when the lease does not include DNS servers. Queries for every other name still use the resolvers Docker assigned before split DNS was enabled.
+
+```yaml
+services:
+  vpnclient:
+    image: containinger/docker-softether-vpn-client:1.0.0
+    container_name: lan-vpn
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      SE_SERVER: vpn.example.net:443
+      SE_HUB: TheHub
+      SE_USERNAME: vpnuser
+      SE_PASSWORD: ${SE_PASSWORD:?Set SE_PASSWORD from your secret store}
+      SE_DNS_DOMAINS: lan,home.arpa,1.168.192.in-addr.arpa
+      SE_DNS_SEARCH: lan
+    restart: unless-stopped
+
+  app:
+    image: alpine:3.24
+    container_name: lan-app
+    network_mode: service:vpnclient
+    depends_on:
+      - vpnclient
+    command: ["sleep", "infinity"]
+    restart: unless-stopped
+```
+
+From `lan-app`, `getent hosts ps5-shalltear.lan` uses the home DNS server. `getent hosts ps5-shalltear` uses it too, because of the search list.
+
+### Publish VPS services to the home LAN
+
+Give the adapter a stable MAC address and a DHCP hostname. The home router can reserve that MAC and register `vps-services.lan` from option 12. Add further names as CNAMEs of that hostname. The service listens on all interfaces in the shared network namespace and does not publish ports on the VPS.
+
+Generate an address and use that output as `SE_MAC_ADDRESS`. Each container on the same LAN needs its own address. The printed value is a locally administered unicast address: the second hexadecimal digit of the first octet is `2`, `6`, `a`, or `e`.
+
+```shell
+docker run --rm containinger/docker-softether-vpn-client:1.0.0 gen-mac
+```
+
+From a checkout of this repository, `make mac` prints the same kind of address. The address in the Compose file below is an example. Replace it.
+
+```yaml
+services:
+  vpnclient:
+    image: containinger/docker-softether-vpn-client:1.0.0
+    container_name: vps-vpn
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      SE_SERVER: vpn.example.net:443
+      SE_HUB: TheHub
+      SE_USERNAME: vpnuser
+      SE_PASSWORD: ${SE_PASSWORD:?Set SE_PASSWORD from your secret store}
+      SE_MAC_ADDRESS: "02:00:00:00:00:11"
+      SE_DHCP_HOSTNAME: vps-services
+    restart: unless-stopped
+
+  wiki:
+    image: example/wiki:1.0.0
+    container_name: vps-wiki
+    network_mode: service:vpnclient
+    depends_on:
+      - vpnclient
+    restart: unless-stopped
+```
+
+The SoftEther hub must be bridged to the home LAN. A reservation for `02:00:00:00:00:11` keeps the address stable across `docker compose restart`.
+
 ## Build and validation
 
 Prerequisites:
@@ -189,5 +278,6 @@ SoftEther VPN is developed by the SoftEther VPN Project at the University of Tsu
 - Upstream client: [SoftEtherVPN/SoftEtherVPN_Stable v4.44-9807-rtm](https://github.com/SoftEtherVPN/SoftEtherVPN_Stable/releases/tag/v4.44-9807-rtm)
 - Base system: [Alpine Linux 3.24](https://alpinelinux.org/releases/)
 - DHCP client: [dhcpcd](https://roy.marples.name/projects/dhcpcd)
+- Split DNS: [dnsmasq](https://thekelleys.org.uk/dnsmasq/doc.html)
 - Process supervisor: [Supervisor](http://supervisord.org/)
 - Documentation policy: [Nefarius house style](AGENTS.md)

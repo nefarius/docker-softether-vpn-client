@@ -1,0 +1,112 @@
+#!/bin/sh
+# dhcpcd sources this file after every hook run. The body is a function so
+# `return` cannot terminate the dhcpcd process that sources the file.
+
+softether_write_dns_servers() {
+    mode=$1
+    servers=$2
+    mkdir -p "$softether_dns_run_dir" || return 1
+    tmp="${softether_dns_servers_file}.tmp"
+    : > "$tmp" || return 1
+
+    rest=$SE_DNS_DOMAINS
+    while [ -n "$rest" ]; do
+        case "$rest" in
+            *,*)
+                domain=${rest%%,*}
+                rest=${rest#*,}
+                ;;
+            *)
+                domain=$rest
+                rest=
+                ;;
+        esac
+
+        if [ "$mode" = "forward" ]; then
+            rest_ns=$servers
+            while [ -n "$rest_ns" ]; do
+                case "$rest_ns" in
+                    *\ *)
+                        ns=${rest_ns%% *}
+                        rest_ns=${rest_ns#* }
+                        ;;
+                    *)
+                        ns=$rest_ns
+                        rest_ns=
+                        ;;
+                esac
+                printf 'server=/%s/%s\n' "$domain" "$ns" >> "$tmp" || return 1
+            done
+        else
+            # servers-file accepts server=/domain/ and rejects the local=
+            # spelling. An empty address answers the domain from local data,
+            # which is NXDOMAIN until a VPN DNS server is known.
+            printf 'server=/%s/\n' "$domain" >> "$tmp" || return 1
+        fi
+    done
+
+    mv "$tmp" "$softether_dns_servers_file" || return 1
+}
+
+softether_reload_dnsmasq() {
+    pkill -HUP dnsmasq >/dev/null 2>&1 || true
+}
+
+softether_collect_dns_servers() {
+    softether_dns_valid=
+    rest=${new_domain_name_servers:-}
+    while [ -n "$rest" ]; do
+        case "$rest" in
+            *\ *)
+                ns=${rest%% *}
+                rest=${rest#* }
+                ;;
+            *)
+                ns=$rest
+                rest=
+                ;;
+        esac
+        case "$ns" in
+            [0-9]*.[0-9]*.[0-9]*.[0-9]*)
+                softether_dns_valid="${softether_dns_valid} ${ns}"
+                ;;
+        esac
+    done
+    # Drop the leading space left by the first accepted address.
+    softether_dns_valid=${softether_dns_valid# }
+}
+
+softether_dns_hook() {
+    if [ -z "${SE_DNS_DOMAINS:-}" ] || [ -n "${SE_DNS_SERVERS:-}" ]; then
+        return 0
+    fi
+
+    case "${interface:-}" in
+        "vpn_${SE_NICNAME:-}") ;;
+        *)
+            return 0
+            ;;
+    esac
+
+    softether_dns_run_dir="${SE_DNS_RUN_DIR:-/run/softether-dns}"
+    softether_dns_servers_file="${softether_dns_run_dir}/servers.conf"
+
+    case "${reason:-}" in
+        BOUND|RENEW|REBIND|REBOOT)
+            softether_collect_dns_servers
+            if [ -n "$softether_dns_valid" ]; then
+                softether_write_dns_servers forward "$softether_dns_valid" || return 0
+            else
+                softether_write_dns_servers local || return 0
+            fi
+            softether_reload_dnsmasq
+            ;;
+        EXPIRE|RELEASE|NOCARRIER|STOP)
+            softether_write_dns_servers local || return 0
+            softether_reload_dnsmasq
+            ;;
+    esac
+}
+
+softether_dns_hook
+unset -f softether_dns_hook softether_write_dns_servers softether_reload_dnsmasq softether_collect_dns_servers
