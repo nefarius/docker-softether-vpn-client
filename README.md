@@ -252,9 +252,9 @@ The image build clones SoftEther tag `v4.44-9807-rtm` and checks that the checko
 
 ## Continuous integration
 
-Pull requests and pushes to `master` run ShellCheck, Hadolint, the mocked shell tests, and a Buildx build for `linux/amd64` and `linux/arm64`. The amd64 image is then smoke-tested.
+Pull requests and pushes to `master` run ShellCheck, Hadolint, and the mocked shell tests. `linux/amd64` is built natively and smoke-tested on `ubuntu-latest`. `linux/arm64` is built natively and smoke-tested on `ubuntu-24.04-arm`.
 
-Pushing a tag that matches `vMAJOR.MINOR.PATCH` publishes the Docker Hub image for both architectures, including provenance and an SBOM. Pre-release suffixes are rejected. Publishing uses the `containinger` account and the `DOCKERHUB_TOKEN` repository secret.
+Pushing a tag that matches `vMAJOR.MINOR.PATCH` publishes the Docker Hub image. Each architecture is built on a native runner, pushed by digest with provenance and an SBOM, then combined into one manifest list. Pre-release suffixes are rejected. Publishing uses the `containinger` account and the `DOCKERHUB_TOKEN` repository secret.
 
 Dependabot opens weekly pull requests for Dockerfile base-image updates and GitHub Actions updates.
 
