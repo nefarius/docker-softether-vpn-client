@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+if [ "${SE_DNS_ENABLED:-false}" != "true" ]; then
+    # Supervisor expands %(ENV_...)s after it has already read autostart, so
+    # the program cannot be switched off from the environment. Stay running
+    # and idle instead of exiting, which Supervisor would treat as a crash.
+    exec sleep infinity
+fi
+
+exec "${SE_DNSMASQ_BIN:-/usr/sbin/dnsmasq}" \
+    --keep-in-foreground \
+    --log-facility=- \
+    --conf-file="${SE_DNSMASQ_CONF:-/etc/dnsmasq.d/softether.conf}"

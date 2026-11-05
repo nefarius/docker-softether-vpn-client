@@ -1,0 +1,18 @@
+---
+description: Do feature work on a feature branch, switching to it when it already exists
+alwaysApply: true
+---
+
+# New branch required
+
+Do not implement or commit work on `master`. Before making changes, check whether the current
+branch already is the requested work.
+
+- If it is, continue on that branch.
+- Before creating or switching to a branch, check for uncommitted changes. If the worktree
+  is dirty, stop and ask the user what to do; do not switch or stash. Proceed only when it is
+  clean.
+- If the current branch is not the requested work and that branch already exists, switch to it.
+- Create a new branch from current `master` (`feat/…` or `fix/…`) only when the requested
+  branch does not exist and the current branch is not that work, then make the changes there.
+- Do not merge or push to `master` unless the user explicitly asks.

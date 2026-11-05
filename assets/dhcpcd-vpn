@@ -21,6 +21,28 @@ while [ ! -d "${NET_SYS}/${iface}" ]; do
     sleep "$WAIT_INTERVAL"
 done
 
+if [ -z "${SE_MAC_LINUX:-}" ] && [ -n "${SE_MAC_ADDRESS:-}" ]; then
+    SE_MAC_LINUX=$(printf '%s' "$SE_MAC_ADDRESS" | tr '[:upper:]' '[:lower:]' | tr '-' ':')
+fi
+
+# NicSetSetting is applied before the client starts. If the adapter still
+# comes up with a different address, set it here before dhcpcd builds the
+# client identifier from the hardware address.
+if [ -n "${SE_MAC_LINUX:-}" ]; then
+    current=$(cat "${NET_SYS}/${iface}/address")
+    if [ "$current" != "$SE_MAC_LINUX" ]; then
+        ip link set dev "$iface" down
+        ip link set dev "$iface" address "$SE_MAC_LINUX"
+        ip link set dev "$iface" up
+    fi
+fi
+
+if [ -n "${SE_MAC_LINUX:-}" ]; then
+    dhcpcd_conf="${SE_DHCPCD_CONF:-/etc/dhcpcd-vpn.conf}"
+else
+    dhcpcd_conf="${SE_DHCPCD_DUID_CONF:-/etc/dhcpcd-vpn-duid.conf}"
+fi
+
 # --nohook resolv.conf keeps VPN DHCP from replacing the container resolv.conf.
 # --nobackground keeps dhcpcd attached to Supervisor.
 # The TAP reports itself as Ethernet. dhcpcd then leaves the BOOTP broadcast
@@ -28,10 +50,34 @@ done
 # not have yet. Windows and the previous dhclient setup request a broadcast
 # offer, which a SoftEther TAP can receive. --noipv4ll stops the 169.254
 # fallback from hiding a missed lease.
-exec dhcpcd \
+set -- \
     --nobackground \
     --debug \
-    --nohook resolv.conf \
+    --nohook \
+    resolv.conf \
     --broadcast \
     --noipv4ll \
-    "$iface"
+    -f \
+    "$dhcpcd_conf"
+
+if [ -n "${SE_DHCP_HOSTNAME:-}" ]; then
+    # dhcpcd treats a separate argument after --hostname as an interface name.
+    set -- "$@" "--hostname=${SE_DHCP_HOSTNAME}"
+fi
+
+# dhcpcd builds a new environment for its hooks and does not keep the
+# container environment. Pass the values the exit hook reads. Leave an unset
+# SE_DNS_SERVERS unset so a lease can still update the split-DNS servers.
+set -- "$@" -e "SE_NICNAME=${SE_NICNAME}"
+if [ -n "${SE_DNS_DOMAINS:-}" ]; then
+    set -- "$@" -e "SE_DNS_DOMAINS=${SE_DNS_DOMAINS}"
+fi
+if [ -n "${SE_DNS_SERVERS:-}" ]; then
+    set -- "$@" -e "SE_DNS_SERVERS=${SE_DNS_SERVERS}"
+fi
+if [ -n "${SE_DNS_RUN_DIR:-}" ]; then
+    set -- "$@" -e "SE_DNS_RUN_DIR=${SE_DNS_RUN_DIR}"
+fi
+
+set -- "$@" "$iface"
+exec dhcpcd "$@"

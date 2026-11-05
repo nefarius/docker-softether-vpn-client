@@ -55,21 +55,29 @@ LABEL org.opencontainers.image.title="docker-softether-vpn-client" \
 # hadolint ignore=DL3018
 RUN apk add --no-cache \
         dhcpcd \
+        dnsmasq \
+        iproute2 \
         ncurses-libs \
         openssl \
         readline \
         supervisor \
         zlib \
-    && mkdir -p /usr/vpnclient /var/log/supervisor
+    && mkdir -p /usr/vpnclient /var/log/supervisor /var/lib/softether-dns
 
 ENV LANG=C.UTF-8 \
     SE_ACCOUNT_NAME=default \
     SE_TYPE=standard \
-    SE_NICNAME=vpn
+    SE_NICNAME=vpn \
+    SE_DNS_ENABLED=false
 
 COPY --from=build /opt/install/ /
 COPY --chmod=755 assets/entrypoint.sh /entrypoint.sh
 COPY --chmod=755 assets/dhcpcd-vpn /usr/local/bin/dhcpcd-vpn
+COPY --chmod=755 assets/dns-split /usr/local/bin/dns-split
+COPY --chmod=755 assets/gen-mac /usr/local/bin/gen-mac
+COPY --chmod=755 assets/dhcpcd-exit-hook /etc/dhcpcd.exit-hook
+COPY assets/dhcpcd.conf /etc/dhcpcd-vpn.conf
+COPY assets/dhcpcd-duid.conf /etc/dhcpcd-vpn-duid.conf
 COPY assets/supervisord.conf /etc/supervisord.conf
 
 ENTRYPOINT ["/entrypoint.sh"]

@@ -1,0 +1,53 @@
+#!/bin/sh
+set -eu
+
+# Print one locally administered unicast MAC address for SE_MAC_ADDRESS.
+# Bit 0 of the first octet is the multicast bit and must stay clear.
+# Bit 1 is the local bit and must be set, so the address cannot collide
+# with one assigned by a hardware vendor. The second hex digit is then
+# 2, 6, a, or e.
+
+if [ -n "${SE_MAC_ENTROPY:-}" ]; then
+    raw=$SE_MAC_ENTROPY
+else
+    raw=$(od -An -N6 -tx1 /dev/urandom)
+fi
+# Word splitting is the byte separator. od and the test entropy both use spaces.
+# shellcheck disable=SC2046
+set -- $(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')
+
+if [ "$#" -ne 6 ]; then
+    echo "Could not read 6 random bytes for a MAC address" >&2
+    exit 1
+fi
+
+n=0
+for byte in "$@"; do
+    n=$((n + 1))
+    case "$byte" in
+        [0-9a-f][0-9a-f]) ;;
+        *)
+            echo "Random byte ${n} is not two hexadecimal digits" >&2
+            exit 1
+            ;;
+    esac
+done
+
+high=${1%?}
+low=${1#?}
+case "$low" in
+    0|1) low=2 ;;
+    2|3) low=2 ;;
+    4|5) low=6 ;;
+    6|7) low=6 ;;
+    8|9) low=a ;;
+    a|b) low=a ;;
+    c|d) low=e ;;
+    e|f) low=e ;;
+    *)
+        echo "Random byte 1 is not two hexadecimal digits" >&2
+        exit 1
+        ;;
+esac
+
+printf '%s:%s:%s:%s:%s:%s\n' "${high}${low}" "$2" "$3" "$4" "$5" "$6"
