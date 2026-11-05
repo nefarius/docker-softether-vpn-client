@@ -19,6 +19,7 @@ Published images are `containinger/docker-softether-vpn-client`. A stable tag `v
 - Runs the client and DHCP client under Supervisor, with both logging to container stdout.
 - Optional split DNS. Names under `SE_DNS_DOMAINS` go to the home DNS servers; every other name keeps the resolver Docker configured for the container.
 - Optional fixed adapter MAC address and DHCP hostname, so a home router can reserve an address and publish a name.
+- Reports readiness with a Docker health check. The check passes when the VPN session is established, the adapter has an IPv4 address, and, when split DNS is enabled, dnsmasq is forwarding those domains.
 - Builds `linux/amd64` and `linux/arm64` from Alpine 3.24.
 
 ## Limitations
@@ -35,7 +36,8 @@ Published images are `containinger/docker-softether-vpn-client`. A stable tag `v
 - Without `SE_MAC_ADDRESS`, dhcpcd keeps identifying the client with a DUID. The adapter MAC is generated again whenever the client profile is recreated, so a DHCP reservation needs the fixed address.
 - SoftEther's Linux client does not rewrite the routing table. A route that sends the VPN server itself through the tunnel will black-hole the session.
 - The management port is not published. Do not expose it.
-- There is no image health check. A running Supervisor process does not prove that the VPN session is up.
+- Compose waits for `healthy` only when the stack starts. A tunnel that drops later marks the container `unhealthy` and leaves companion services running. Companions should still retry connections that fail while they are running.
+- Kubernetes reads readiness from an exec probe that runs `/usr/local/bin/vpn-ready`. The image health check is a Docker Engine feature.
 - CI does not connect to a live VPN server.
 
 ## Supported systems
@@ -67,6 +69,8 @@ The container runs as root. Creating the TAP adapter and configuring its address
 | `SE_DNS_SEARCH` | no | previous search list | Comma-separated search domains written to `/etc/resolv.conf`. No spaces. |
 | `SE_MAC_ADDRESS` | no | generated | Locally administered unicast MAC address, with `:` or `-` separators. Multicast and all-zero addresses are rejected. `gen-mac` prints a usable value. |
 | `SE_DHCP_HOSTNAME` | no | unset | One DNS label, 1 to 63 characters. Sent as DHCP option 12. |
+| `SE_HEALTH_CHECK_TARGET` | no | unset | `host:port` probed through the tunnel before the container is marked healthy. The host is an IPv4 address or a domain name. The port is 1 to 65535. |
+| `SE_HEALTH_CHECK_TIMEOUT` | no | `3` | Seconds to wait for `SE_HEALTH_CHECK_TARGET`. |
 
 The Linux adapter name is `vpn_` plus the normalized NIC name. The default adapter is `vpn_vpn`.
 
@@ -111,6 +115,12 @@ services:
 
 This Compose file runs Apache Guacamole in the VPN container's network namespace. Publish application ports on the VPN service. The Guacamole image and its configuration are outside the support scope of this repository.
 
+`depends_on` with `condition: service_healthy` waits until the health check passes. That form, including `restart: true`, needs Docker Compose 2.17 or newer. `restart: true` restarts the companion when Compose restarts the VPN container, which replaces the shared network namespace. The same `depends_on` block belongs on every companion in the examples below. Inspect a failed check with the VPN container name:
+
+```shell
+docker inspect --format '{{json .State.Health}}' guacamole-vpn
+```
+
 ```yaml
 services:
   vpnclient:
@@ -133,7 +143,9 @@ services:
     image: oznu/guacamole
     container_name: guacamole-app
     depends_on:
-      - vpnclient
+      vpnclient:
+        condition: service_healthy
+        restart: true
     network_mode: service:vpnclient
     volumes:
       - ./config:/config
@@ -167,7 +179,9 @@ services:
     container_name: lan-app
     network_mode: service:vpnclient
     depends_on:
-      - vpnclient
+      vpnclient:
+        condition: service_healthy
+        restart: true
     command: ["sleep", "infinity"]
     restart: unless-stopped
 ```
@@ -209,7 +223,9 @@ services:
     container_name: vps-wiki
     network_mode: service:vpnclient
     depends_on:
-      - vpnclient
+      vpnclient:
+        condition: service_healthy
+        restart: true
     restart: unless-stopped
 ```
 

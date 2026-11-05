@@ -172,6 +172,49 @@ require_hostname() {
     esac
 }
 
+require_health_target() {
+    value=$1
+    case "$value" in
+        *:*) ;;
+        *) fail "SE_HEALTH_CHECK_TARGET must be host:port" ;;
+    esac
+
+    host=${value%:*}
+    port=${value##*:}
+    case "$host" in
+        ""|*:*)
+            fail "SE_HEALTH_CHECK_TARGET must be host:port"
+            ;;
+    esac
+    case "$port" in
+        ""|*[!0-9]*)
+            fail "SE_HEALTH_CHECK_TARGET must be host:port"
+            ;;
+    esac
+
+    port_ok=$(printf '%s\n' "$port" | awk '
+        length($0) > 1 && substr($0, 1, 1) == "0" { print "no"; exit }
+        ($0 + 0) < 1 || ($0 + 0) > 65535 { print "no"; exit }
+        { print "yes" }
+    ')
+    if [ "$port_ok" != "yes" ]; then
+        fail "SE_HEALTH_CHECK_TARGET must be host:port"
+    fi
+
+    case "$host" in
+        [0-9]*.[0-9]*.[0-9]*.[0-9]*)
+            require_ipv4 "SE_HEALTH_CHECK_TARGET must be host:port" "$host"
+            ;;
+        *)
+            # require_domain exits with its own message. Run it in a subshell
+            # so every rejected target reports the same host:port error.
+            if ! ( require_domain "SE_HEALTH_CHECK_TARGET" "$host" ) >/dev/null 2>&1; then
+                fail "SE_HEALTH_CHECK_TARGET must be host:port"
+            fi
+            ;;
+    esac
+}
+
 require_mac() {
     raw=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr '-' ':')
     case "$raw" in
@@ -454,6 +497,9 @@ if [ "${1:-}" = "supervisord" ]; then
     fi
     if [ -n "${SE_DHCP_HOSTNAME:-}" ]; then
         require_hostname "$SE_DHCP_HOSTNAME"
+    fi
+    if [ -n "${SE_HEALTH_CHECK_TARGET:-}" ]; then
+        require_health_target "$SE_HEALTH_CHECK_TARGET"
     fi
     configure_split_dns
 

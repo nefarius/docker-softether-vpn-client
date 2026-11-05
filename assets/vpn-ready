@@ -1,0 +1,67 @@
+#!/bin/sh
+# Exit 0 when the VPN adapter can carry traffic. Docker runs this as the
+# image health check. Companion services wait on the container health state.
+set -eu
+
+not_ready() {
+    printf '%s\n' "$1" >&2
+    exit 1
+}
+
+account=${SE_ACCOUNT_NAME:-default}
+if [ -z "$account" ]; then
+    account=default
+fi
+
+if ! status_output=$(vpncmd localhost /CLIENT /CMD AccountStatusGet "$account" 2>&1); then
+    not_ready "VPN session status is unavailable"
+fi
+case "$status_output" in
+    *"Session Established"*) ;;
+    *) not_ready "VPN session is not established" ;;
+esac
+
+nic=${SE_NICNAME:-vpn}
+if [ -z "$nic" ]; then
+    nic=vpn
+fi
+nic=$(printf '%s' "$nic" | tr '[:upper:]' '[:lower:]')
+iface="vpn_${nic}"
+
+if ! addr_output=$(ip -4 -o addr show dev "$iface" 2>&1); then
+    not_ready "VPN adapter ${iface} has no IPv4 address"
+fi
+case "$addr_output" in
+    *"inet "*) ;;
+    *) not_ready "VPN adapter ${iface} has no IPv4 address" ;;
+esac
+
+if [ -n "${SE_DNS_DOMAINS:-}" ]; then
+    if ! pgrep -x dnsmasq >/dev/null 2>&1; then
+        not_ready "Split DNS is not running"
+    fi
+    servers_file="${SE_DNS_RUN_DIR:-/run/softether-dns}/servers.conf"
+    if [ ! -f "$servers_file" ]; then
+        not_ready "Split DNS forwarders are not configured"
+    fi
+    # server=/domain/ answers from local data, which is NXDOMAIN until a
+    # forwarder is known. server=/domain/address is a real forwarder.
+    if grep -E -q '^server=/[^/]+/$' "$servers_file"; then
+        not_ready "Split DNS forwarders are not configured"
+    fi
+    if ! grep -E -q '^server=/[^/]+/[^/[:space:]]+$' "$servers_file"; then
+        not_ready "Split DNS forwarders are not configured"
+    fi
+fi
+
+if [ -n "${SE_HEALTH_CHECK_TARGET:-}" ]; then
+    target=$SE_HEALTH_CHECK_TARGET
+    host=${target%:*}
+    port=${target##*:}
+    timeout=${SE_HEALTH_CHECK_TIMEOUT:-3}
+    if ! nc -z -w "$timeout" "$host" "$port"; then
+        not_ready "Health check target ${target} is not reachable"
+    fi
+fi
+
+exit 0

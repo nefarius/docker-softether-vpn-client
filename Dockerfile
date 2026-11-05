@@ -76,9 +76,15 @@ COPY --chmod=755 assets/dhcpcd-vpn /usr/local/bin/dhcpcd-vpn
 COPY --chmod=755 assets/dns-split /usr/local/bin/dns-split
 COPY --chmod=755 assets/gen-mac /usr/local/bin/gen-mac
 COPY --chmod=755 assets/dhcpcd-exit-hook /etc/dhcpcd.exit-hook
+COPY --chmod=755 assets/vpn-ready /usr/local/bin/vpn-ready
 COPY assets/dhcpcd.conf /etc/dhcpcd-vpn.conf
 COPY assets/dhcpcd-duid.conf /etc/dhcpcd-vpn-duid.conf
 COPY assets/supervisord.conf /etc/supervisord.conf
+
+# --start-interval probes every 2s during the start period on Docker Engine 25
+# and newer. Older engines ignore that flag and wait for --interval.
+HEALTHCHECK --interval=30s --timeout=15s --start-period=60s --start-interval=2s --retries=3 \
+    CMD ["/usr/local/bin/vpn-ready"]
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["supervisord", "-c", "/etc/supervisord.conf"]
