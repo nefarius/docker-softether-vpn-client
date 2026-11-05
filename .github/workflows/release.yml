@@ -7,17 +7,22 @@ on:
 
 permissions:
   contents: read
+  actions: write
   id-token: write
   attestations: write
 
+concurrency:
+  group: release-publish
+  cancel-in-progress: false
+
 jobs:
-  publish:
-    name: Publish Docker image
+  prepare:
+    name: Prepare release
     runs-on: ubuntu-latest
-    timeout-minutes: 180
-    concurrency:
-      group: release-publish
-      cancel-in-progress: false
+    timeout-minutes: 10
+    outputs:
+      tags: ${{ steps.meta.outputs.tags }}
+      labels: ${{ steps.meta.outputs.labels }}
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -33,9 +38,6 @@ jobs:
             echo "Refusing to publish ${GITHUB_REF_NAME}. Use vMAJOR.MINOR.PATCH." >&2
             exit 1
           fi
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
@@ -107,16 +109,134 @@ jobs:
             exit 1
           fi
 
-      - name: Build and push
+  build:
+    name: Build ${{ matrix.arch }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: containinger
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           file: Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          platforms: ${{ matrix.platform }}
+          labels: ${{ needs.prepare.outputs.labels }}
+          outputs: type=image,name=containinger/docker-softether-vpn-client,push-by-digest=true,name-canonical=true,push=true
           provenance: mode=max
           sbom: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Build did not produce a sha256 digest." >&2
+            exit 1
+          fi
+          mkdir -p "${RUNNER_TEMP}/digests"
+          printf '%s\n' "${DIGEST}" > "${RUNNER_TEMP}/digests/digest"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/digest
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Publish manifest list
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: digest-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: containinger
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Create and push manifest list
+        env:
+          TAGS: ${{ needs.prepare.outputs.tags }}
+        run: |
+          set -euo pipefail
+          args=()
+          while IFS= read -r tag; do
+            [[ -z "${tag}" ]] && continue
+            if [[ ! "${tag}" =~ ^containinger/docker-softether-vpn-client:[A-Za-z0-9._-]+$ ]]; then
+              echo "Refusing unexpected image tag: ${tag}" >&2
+              exit 1
+            fi
+            args+=(-t "${tag}")
+          done <<< "${TAGS}"
+          if [[ "${#args[@]}" -eq 0 ]]; then
+            echo "Docker metadata produced no tags." >&2
+            exit 1
+          fi
+
+          sources=()
+          shopt -s nullglob
+          for file in "${RUNNER_TEMP}/digests"/digest-*/digest; do
+            digest="$(tr -d '[:space:]' < "${file}")"
+            if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "Invalid image digest in ${file}." >&2
+              exit 1
+            fi
+            sources+=("containinger/docker-softether-vpn-client@${digest}")
+          done
+          if [[ "${#sources[@]}" -ne 2 ]]; then
+            echo "Expected digests for amd64 and arm64, found ${#sources[@]}." >&2
+            exit 1
+          fi
+
+          docker buildx imagetools create "${args[@]}" "${sources[@]}"
+
+      - name: Inspect image
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          image="containinger/docker-softether-vpn-client:${version}"
+          inspect="$(docker buildx imagetools inspect "${image}")"
+          printf '%s\n' "${inspect}"
+          printf '%s\n' "${inspect}" | grep -F -q 'linux/amd64'
+          printf '%s\n' "${inspect}" | grep -F -q 'linux/arm64'
