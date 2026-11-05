@@ -13,6 +13,6 @@ branch already is the requested work.
   is dirty, stop and ask the user what to do; do not switch or stash. Proceed only when it is
   clean.
 - If the current branch is not the requested work and that branch already exists, switch to it.
-- Otherwise, create a new branch from current `master` (`feat/…` or `fix/…`), then make
-  changes there.
+- Create a new branch from current `master` (`feat/…` or `fix/…`) only when the requested
+  branch does not exist and the current branch is not that work, then make the changes there.
 - Do not merge or push to `master` unless the user explicitly asks.
