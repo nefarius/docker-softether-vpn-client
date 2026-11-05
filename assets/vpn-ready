@@ -58,6 +58,8 @@ if [ -n "${SE_HEALTH_CHECK_TARGET:-}" ]; then
     target=$SE_HEALTH_CHECK_TARGET
     host=${target%:*}
     port=${target##*:}
+    # 0 leaves nc without a connect deadline. Docker then stops the probe at
+    # the image health-check timeout, which is 15 seconds.
     timeout=${SE_HEALTH_CHECK_TIMEOUT:-3}
     if ! nc -z -w "$timeout" "$host" "$port"; then
         not_ready "Health check target ${target} is not reachable"

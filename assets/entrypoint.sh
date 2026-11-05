@@ -172,6 +172,25 @@ require_hostname() {
     esac
 }
 
+require_health_timeout() {
+    value=$1
+    case "$value" in
+        ""|*[!0-9]*|0?*)
+            fail "SE_HEALTH_CHECK_TIMEOUT must be an integer from 0 through 2147483647"
+            ;;
+    esac
+
+    # Compare in awk. The shell's arithmetic wraps values past 32 bits.
+    timeout_ok=$(printf '%s\n' "$value" | awk '
+        length($0) > 10 { print "no"; exit }
+        ($0 + 0) > 2147483647 { print "no"; exit }
+        { print "yes" }
+    ')
+    if [ "$timeout_ok" != "yes" ]; then
+        fail "SE_HEALTH_CHECK_TIMEOUT must be an integer from 0 through 2147483647"
+    fi
+}
+
 require_health_target() {
     value=$1
     case "$value" in
@@ -499,6 +518,9 @@ if [ "${1:-}" = "supervisord" ]; then
         require_hostname "$SE_DHCP_HOSTNAME"
     fi
     if [ -n "${SE_HEALTH_CHECK_TARGET:-}" ]; then
+        if [ -n "${SE_HEALTH_CHECK_TIMEOUT:-}" ]; then
+            require_health_timeout "$SE_HEALTH_CHECK_TIMEOUT"
+        fi
         require_health_target "$SE_HEALTH_CHECK_TARGET"
     fi
     configure_split_dns

@@ -70,7 +70,7 @@ The container runs as root. Creating the TAP adapter and configuring its address
 | `SE_MAC_ADDRESS` | no | generated | Locally administered unicast MAC address, with `:` or `-` separators. Multicast and all-zero addresses are rejected. `gen-mac` prints a usable value. |
 | `SE_DHCP_HOSTNAME` | no | unset | One DNS label, 1 to 63 characters. Sent as DHCP option 12. |
 | `SE_HEALTH_CHECK_TARGET` | no | unset | `host:port` probed through the tunnel before the container is marked healthy. The host is an IPv4 address or a domain name. The port is 1 to 65535. |
-| `SE_HEALTH_CHECK_TIMEOUT` | no | `3` | Seconds to wait for `SE_HEALTH_CHECK_TARGET`. |
+| `SE_HEALTH_CHECK_TIMEOUT` | no | `3` | Integer seconds from 0 through 2147483647. `0` disables the `nc` timeout. This image's health check stops the probe after 15 seconds. |
 
 The Linux adapter name is `vpn_` plus the normalized NIC name. The default adapter is `vpn_vpn`.
 

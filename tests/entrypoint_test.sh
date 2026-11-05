@@ -126,6 +126,7 @@ run_entry() {
         SE_MAC_ADDRESS="${SE_MAC_ADDRESS-}" \
         SE_DHCP_HOSTNAME="${SE_DHCP_HOSTNAME-}" \
         SE_HEALTH_CHECK_TARGET="${SE_HEALTH_CHECK_TARGET-}" \
+        SE_HEALTH_CHECK_TIMEOUT="${SE_HEALTH_CHECK_TIMEOUT-}" \
         SE_RESOLV_CONF="${SE_RESOLV_CONF-}" \
         SE_DNSMASQ_CONF="${SE_DNSMASQ_CONF-}" \
         SE_DNS_RUN_DIR="${SE_DNS_RUN_DIR-}" \
@@ -154,6 +155,7 @@ base_env() {
     SE_MAC_ADDRESS=""
     SE_DHCP_HOSTNAME=""
     SE_HEALTH_CHECK_TARGET=""
+    SE_HEALTH_CHECK_TIMEOUT=""
 }
 
 new_case
@@ -603,6 +605,29 @@ do
     printf '%s\n' "$output" | grep -F -q "SE_HEALTH_CHECK_TARGET must be host:port" || fail "invalid health target message for ${label}"
     assert_not_contains "$MOCK_LOG" "vpnclient arg=start" "invalid health target started the client"
     pass "rejects SE_HEALTH_CHECK_TARGET with ${label}"
+done
+
+for valid_timeout in 0 3 10 2147483647; do
+    new_case
+    base_env
+    SE_HEALTH_CHECK_TARGET="192.168.30.139:8081"
+    SE_HEALTH_CHECK_TIMEOUT="$valid_timeout"
+    run_setup
+    assert_eq "$status" "0" "accepted health timeout status for ${valid_timeout}"
+    assert_contains "$MOCK_LOG" "vpnclient arg=start" "accepted health timeout did not start the client"
+    pass "accepts SE_HEALTH_CHECK_TIMEOUT ${valid_timeout}"
+done
+
+for invalid_timeout in -1 1.5 abc 00 09 2147483648 99999999999; do
+    new_case
+    base_env
+    SE_HEALTH_CHECK_TARGET="192.168.30.139:8081"
+    SE_HEALTH_CHECK_TIMEOUT="$invalid_timeout"
+    run_setup
+    assert_eq "$status" "1" "invalid health timeout status for ${invalid_timeout}"
+    printf '%s\n' "$output" | grep -F -q "SE_HEALTH_CHECK_TIMEOUT must be an integer from 0 through 2147483647" || fail "invalid health timeout message for ${invalid_timeout}"
+    assert_not_contains "$MOCK_LOG" "vpnclient arg=start" "invalid health timeout started the client"
+    pass "rejects SE_HEALTH_CHECK_TIMEOUT ${invalid_timeout}"
 done
 
 new_case
