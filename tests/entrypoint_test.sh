@@ -372,7 +372,49 @@ output="$(
 assert_eq "$status" "0" "dhcpcd hostname status"
 assert_contains "$DHCP_CASE/dhcp.log" "dhcpcd arg=--hostname=vps-services" "dhcpcd was not given the hostname"
 assert_contains "$DHCP_CASE/dhcp.log" "dhcpcd arg=/etc/dhcpcd-vpn-duid.conf" "hostname request changed the client identifier"
+assert_contains "$DHCP_CASE/dhcp.log" "dhcpcd arg=-e" "dhcpcd was not given a hook environment"
+assert_contains "$DHCP_CASE/dhcp.log" "dhcpcd arg=SE_NICNAME=office" "dhcpcd hook environment omitted SE_NICNAME"
 pass "dhcpcd sends the configured hostname"
+
+: > "$DHCP_CASE/dhcp.log"
+status=0
+output="$(
+    env PATH="$DHCP_CASE/bin:/usr/bin:/bin" \
+        MOCK_LOG="$DHCP_CASE/dhcp.log" \
+        SE_SYS_NET="$DHCP_CASE/sys" \
+        SE_NICNAME="office" \
+        SE_DNS_DOMAINS="lan,home.arpa" \
+        SE_DNS_SERVERS="" \
+        SE_DNS_RUN_DIR="/run/softether-dns" \
+        SE_DHCP_WAIT_ATTEMPTS=2 \
+        SE_DHCP_WAIT_INTERVAL=0 \
+        sh "$DHCPCD" 2>&1
+)" || status=$?
+assert_eq "$status" "0" "dhcpcd split DNS environment status"
+assert_contains "$DHCP_CASE/dhcp.log" "dhcpcd arg=SE_DNS_DOMAINS=lan,home.arpa" "dhcpcd hook environment omitted SE_DNS_DOMAINS"
+assert_contains "$DHCP_CASE/dhcp.log" "dhcpcd arg=SE_NICNAME=office" "dhcpcd hook environment omitted the NIC name"
+assert_contains "$DHCP_CASE/dhcp.log" "dhcpcd arg=SE_DNS_RUN_DIR=/run/softether-dns" "dhcpcd hook environment omitted SE_DNS_RUN_DIR"
+assert_not_contains "$DHCP_CASE/dhcp.log" "SE_DNS_SERVERS" "unset SE_DNS_SERVERS was passed to the hook"
+pass "dhcpcd forwards split DNS settings when servers come from the lease"
+
+: > "$DHCP_CASE/dhcp.log"
+status=0
+output="$(
+    env PATH="$DHCP_CASE/bin:/usr/bin:/bin" \
+        MOCK_LOG="$DHCP_CASE/dhcp.log" \
+        SE_SYS_NET="$DHCP_CASE/sys" \
+        SE_NICNAME="office" \
+        SE_DNS_DOMAINS="lan" \
+        SE_DNS_SERVERS="192.168.1.1" \
+        SE_DNS_RUN_DIR="" \
+        SE_DHCP_WAIT_ATTEMPTS=2 \
+        SE_DHCP_WAIT_INTERVAL=0 \
+        sh "$DHCPCD" 2>&1
+)" || status=$?
+assert_eq "$status" "0" "dhcpcd static DNS environment status"
+assert_contains "$DHCP_CASE/dhcp.log" "dhcpcd arg=SE_DNS_SERVERS=192.168.1.1" "dhcpcd hook environment omitted static DNS servers"
+assert_not_contains "$DHCP_CASE/dhcp.log" "SE_DNS_RUN_DIR" "the default hook directory was overridden"
+pass "dhcpcd forwards static DNS servers and keeps the default run directory"
 
 cat > "$DHCP_CASE/bin/ip" <<'EOF'
 #!/bin/sh

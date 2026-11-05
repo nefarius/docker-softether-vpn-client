@@ -65,5 +65,19 @@ if [ -n "${SE_DHCP_HOSTNAME:-}" ]; then
     set -- "$@" "--hostname=${SE_DHCP_HOSTNAME}"
 fi
 
+# dhcpcd builds a new environment for its hooks and does not keep the
+# container environment. Pass the values the exit hook reads. Leave an unset
+# SE_DNS_SERVERS unset so a lease can still update the split-DNS servers.
+set -- "$@" -e "SE_NICNAME=${SE_NICNAME}"
+if [ -n "${SE_DNS_DOMAINS:-}" ]; then
+    set -- "$@" -e "SE_DNS_DOMAINS=${SE_DNS_DOMAINS}"
+fi
+if [ -n "${SE_DNS_SERVERS:-}" ]; then
+    set -- "$@" -e "SE_DNS_SERVERS=${SE_DNS_SERVERS}"
+fi
+if [ -n "${SE_DNS_RUN_DIR:-}" ]; then
+    set -- "$@" -e "SE_DNS_RUN_DIR=${SE_DNS_RUN_DIR}"
+fi
+
 set -- "$@" "$iface"
 exec dhcpcd "$@"
