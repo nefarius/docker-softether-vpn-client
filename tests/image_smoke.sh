@@ -23,6 +23,15 @@ test -f /etc/supervisord.conf
 test -x /usr/local/bin/dhcpcd-vpn
 test -x /usr/local/bin/dns-split
 test -x /usr/local/bin/gen-mac
+test -x /usr/local/bin/vpn-ready
+command -v nc >/dev/null
+command -v pgrep >/dev/null
+nc -z -w 1 127.0.0.1 1 >/tmp/nc-probe 2>&1 || true
+if grep -F -q "unrecognized option" /tmp/nc-probe || grep -F -q "invalid option" /tmp/nc-probe; then
+    echo "nc rejected -z or -w" >&2
+    cat /tmp/nc-probe >&2
+    exit 1
+fi
 test -f /etc/dhcpcd.exit-hook
 test -f /etc/dhcpcd-vpn.conf
 test -f /etc/dhcpcd-vpn-duid.conf
@@ -99,6 +108,9 @@ if [ "$status" -eq 0 ]; then
     fail "image entrypoint accepted supervisord without VPN settings"
 fi
 printf '%s\n' "$output" | grep -F -q "Please provide SE_SERVER" || fail "image entrypoint did not report SE_SERVER"
+
+health_test="$(docker image inspect --format '{{json .Config.Healthcheck.Test}}' "$IMAGE")"
+printf '%s\n' "$health_test" | grep -F -q "/usr/local/bin/vpn-ready" || fail "image health check is not vpn-ready: ${health_test}"
 
 mac_a="$(docker run --rm "$IMAGE" gen-mac)"
 mac_b="$(docker run --rm "$IMAGE" gen-mac)"

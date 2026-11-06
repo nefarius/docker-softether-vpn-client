@@ -1,7 +1,7 @@
 IMAGE ?= docker-softether-vpn-client:local
 HADOLINT_IMAGE ?= hadolint/hadolint:v2.15.1
 SHELLCHECK_IMAGE ?= koalaman/shellcheck:v0.10.0
-SHELL_FILES := assets/entrypoint.sh assets/dhcpcd-vpn assets/dhcpcd-exit-hook assets/dns-split assets/gen-mac tests/entrypoint_test.sh tests/image_smoke.sh
+SHELL_FILES := assets/entrypoint.sh assets/dhcpcd-vpn assets/dhcpcd-exit-hook assets/dns-split assets/gen-mac assets/vpn-ready tests/entrypoint_test.sh tests/image_smoke.sh
 
 .PHONY: lint test build smoke check mac
 

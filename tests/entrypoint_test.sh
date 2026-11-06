@@ -125,6 +125,8 @@ run_entry() {
         SE_DNS_SEARCH="${SE_DNS_SEARCH-}" \
         SE_MAC_ADDRESS="${SE_MAC_ADDRESS-}" \
         SE_DHCP_HOSTNAME="${SE_DHCP_HOSTNAME-}" \
+        SE_HEALTH_CHECK_TARGET="${SE_HEALTH_CHECK_TARGET-}" \
+        SE_HEALTH_CHECK_TIMEOUT="${SE_HEALTH_CHECK_TIMEOUT-}" \
         SE_RESOLV_CONF="${SE_RESOLV_CONF-}" \
         SE_DNSMASQ_CONF="${SE_DNSMASQ_CONF-}" \
         SE_DNS_RUN_DIR="${SE_DNS_RUN_DIR-}" \
@@ -152,6 +154,8 @@ base_env() {
     SE_DNS_SEARCH=""
     SE_MAC_ADDRESS=""
     SE_DHCP_HOSTNAME=""
+    SE_HEALTH_CHECK_TARGET=""
+    SE_HEALTH_CHECK_TIMEOUT=""
 }
 
 new_case
@@ -574,6 +578,58 @@ do
     pass "rejects ${message}"
 done
 
+for valid_target in "192.168.30.139:8081" "ps5-shalltear.lan:443"; do
+    new_case
+    base_env
+    SE_HEALTH_CHECK_TARGET="$valid_target"
+    run_setup
+    assert_eq "$status" "0" "accepted health target status for ${valid_target}"
+    assert_contains "$MOCK_LOG" "vpnclient arg=start" "accepted health target did not start the client"
+    pass "accepts SE_HEALTH_CHECK_TARGET ${valid_target}"
+done
+
+for invalid_target in \
+    "ps5-shalltear.lan:99999|bad port" \
+    "ps5-shalltear.lan|missing port" \
+    "bad_host:8081|bad host" \
+    "ps5-shalltear.lan:|empty port" \
+    ":8081|empty host" \
+    "192.168.2.256:53|bad address"
+do
+    new_case
+    base_env
+    label=${invalid_target##*|}
+    SE_HEALTH_CHECK_TARGET=${invalid_target%|*}
+    run_setup
+    assert_eq "$status" "1" "invalid health target status for ${label}"
+    printf '%s\n' "$output" | grep -F -q "SE_HEALTH_CHECK_TARGET must be host:port" || fail "invalid health target message for ${label}"
+    assert_not_contains "$MOCK_LOG" "vpnclient arg=start" "invalid health target started the client"
+    pass "rejects SE_HEALTH_CHECK_TARGET with ${label}"
+done
+
+for valid_timeout in 0 3 10 2147483647; do
+    new_case
+    base_env
+    SE_HEALTH_CHECK_TARGET="192.168.30.139:8081"
+    SE_HEALTH_CHECK_TIMEOUT="$valid_timeout"
+    run_setup
+    assert_eq "$status" "0" "accepted health timeout status for ${valid_timeout}"
+    assert_contains "$MOCK_LOG" "vpnclient arg=start" "accepted health timeout did not start the client"
+    pass "accepts SE_HEALTH_CHECK_TIMEOUT ${valid_timeout}"
+done
+
+for invalid_timeout in -1 1.5 abc 00 09 2147483648 99999999999; do
+    new_case
+    base_env
+    SE_HEALTH_CHECK_TARGET="192.168.30.139:8081"
+    SE_HEALTH_CHECK_TIMEOUT="$invalid_timeout"
+    run_setup
+    assert_eq "$status" "1" "invalid health timeout status for ${invalid_timeout}"
+    printf '%s\n' "$output" | grep -F -q "SE_HEALTH_CHECK_TIMEOUT must be an integer from 0 through 2147483647" || fail "invalid health timeout message for ${invalid_timeout}"
+    assert_not_contains "$MOCK_LOG" "vpnclient arg=start" "invalid health timeout started the client"
+    pass "rejects SE_HEALTH_CHECK_TIMEOUT ${invalid_timeout}"
+done
+
 new_case
 base_env
 rm -f "$SE_RESOLV_CONF"
@@ -894,5 +950,220 @@ while [ "$i" -lt 20 ]; do
     esac
 done
 pass "gen-mac prints a compatible random address"
+
+READY="${ROOT}/assets/vpn-ready"
+READY_CASE="$TMP/ready"
+mkdir -p "$READY_CASE/bin" "$READY_CASE/run"
+cat > "$READY_CASE/bin/vpncmd" <<'EOF'
+#!/bin/sh
+log="${MOCK_LOG:?}"
+{
+    printf 'vpncmd argc=%s\n' "$#"
+    for arg in "$@"; do
+        printf 'vpncmd arg=%s\n' "$arg"
+    done
+} >> "$log"
+if [ "${VPNCMD_STATUS:-0}" != "0" ]; then
+    printf 'vpncmd unavailable\n' >&2
+    exit 1
+fi
+if [ "${VPNCMD_ESTABLISHED:-yes}" = "yes" ]; then
+    printf '%s\n' 'Session Status|Connection Completed (Session Established)'
+else
+    printf '%s\n' 'Session Status|Connecting'
+fi
+exit 0
+EOF
+cat > "$READY_CASE/bin/ip" <<'EOF'
+#!/bin/sh
+log="${MOCK_LOG:?}"
+{
+    printf 'ip argc=%s\n' "$#"
+    for arg in "$@"; do
+        printf 'ip arg=%s\n' "$arg"
+    done
+} >> "$log"
+if [ "${IP_STATUS:-0}" != "0" ]; then
+    exit 1
+fi
+printf '%s\n' "${IP_OUTPUT-2: vpn_vpn inet 192.168.2.130/24 scope global}"
+exit 0
+EOF
+cat > "$READY_CASE/bin/pgrep" <<'EOF'
+#!/bin/sh
+log="${MOCK_LOG:?}"
+{
+    printf 'pgrep argc=%s\n' "$#"
+    for arg in "$@"; do
+        printf 'pgrep arg=%s\n' "$arg"
+    done
+} >> "$log"
+if [ "${PGREP_STATUS:-0}" != "0" ]; then
+    exit 1
+fi
+exit 0
+EOF
+cat > "$READY_CASE/bin/nc" <<'EOF'
+#!/bin/sh
+log="${MOCK_LOG:?}"
+{
+    printf 'nc argc=%s\n' "$#"
+    for arg in "$@"; do
+        printf 'nc arg=%s\n' "$arg"
+    done
+} >> "$log"
+exit "${NC_STATUS:-0}"
+EOF
+chmod 755 "$READY_CASE/bin/vpncmd" "$READY_CASE/bin/ip" "$READY_CASE/bin/pgrep" "$READY_CASE/bin/nc"
+
+ready_reset() {
+    : > "$READY_CASE/log"
+    rm -f "$READY_CASE/run/servers.conf"
+    SE_ACCOUNT_NAME="default"
+    SE_NICNAME="vpn"
+    SE_DNS_DOMAINS=""
+    SE_DNS_RUN_DIR="$READY_CASE/run"
+    SE_HEALTH_CHECK_TARGET=""
+    SE_HEALTH_CHECK_TIMEOUT=""
+    VPNCMD_STATUS=0
+    VPNCMD_ESTABLISHED="yes"
+    IP_STATUS=0
+    IP_OUTPUT="2: vpn_vpn inet 192.168.2.130/24 scope global"
+    PGREP_STATUS=0
+    NC_STATUS=0
+}
+
+run_ready() {
+    env \
+        PATH="$READY_CASE/bin:/usr/bin:/bin" \
+        MOCK_LOG="$READY_CASE/log" \
+        SE_ACCOUNT_NAME="$SE_ACCOUNT_NAME" \
+        SE_NICNAME="$SE_NICNAME" \
+        SE_DNS_DOMAINS="$SE_DNS_DOMAINS" \
+        SE_DNS_RUN_DIR="$SE_DNS_RUN_DIR" \
+        SE_HEALTH_CHECK_TARGET="$SE_HEALTH_CHECK_TARGET" \
+        SE_HEALTH_CHECK_TIMEOUT="$SE_HEALTH_CHECK_TIMEOUT" \
+        VPNCMD_STATUS="$VPNCMD_STATUS" \
+        VPNCMD_ESTABLISHED="$VPNCMD_ESTABLISHED" \
+        IP_STATUS="$IP_STATUS" \
+        IP_OUTPUT="$IP_OUTPUT" \
+        PGREP_STATUS="$PGREP_STATUS" \
+        NC_STATUS="$NC_STATUS" \
+        sh "$READY"
+}
+
+ready_reset
+status=0
+output="$(run_ready 2>&1)" || status=$?
+assert_eq "$status" "0" "ready without split DNS status"
+assert_eq "$output" "" "ready without split DNS output"
+assert_not_contains "$READY_CASE/log" "pgrep arg=dnsmasq" "split DNS check ran while disabled"
+assert_not_contains "$READY_CASE/log" "nc arg=-z" "probe ran without a target"
+pass "vpn-ready passes when the session and address are up"
+
+ready_reset
+VPNCMD_ESTABLISHED="no"
+status=0
+output="$(run_ready 2>&1)" || status=$?
+assert_eq "$status" "1" "session down status"
+printf '%s\n' "$output" | grep -F -q "VPN session is not established" || fail "session down message"
+assert_not_contains "$READY_CASE/log" "ip arg=addr" "address check ran before the session was up"
+pass "vpn-ready fails when the session is not established"
+
+ready_reset
+VPNCMD_STATUS=1
+status=0
+output="$(run_ready 2>&1)" || status=$?
+assert_eq "$status" "1" "vpncmd failure status"
+printf '%s\n' "$output" | grep -F -q "VPN session status is unavailable" || fail "vpncmd failure message"
+pass "vpn-ready fails when vpncmd cannot report status"
+
+ready_reset
+IP_OUTPUT="2: vpn_vpn"
+status=0
+output="$(run_ready 2>&1)" || status=$?
+assert_eq "$status" "1" "missing address status"
+printf '%s\n' "$output" | grep -F -q "VPN adapter vpn_vpn has no IPv4 address" || fail "missing address message"
+assert_not_contains "$READY_CASE/log" "pgrep arg=dnsmasq" "split DNS check ran without an address"
+pass "vpn-ready fails when the adapter has no IPv4 address"
+
+ready_reset
+IP_STATUS=1
+status=0
+output="$(run_ready 2>&1)" || status=$?
+assert_eq "$status" "1" "missing adapter status"
+printf '%s\n' "$output" | grep -F -q "VPN adapter vpn_vpn has no IPv4 address" || fail "missing adapter message"
+pass "vpn-ready fails when the adapter is missing"
+
+ready_reset
+SE_NICNAME="Office"
+status=0
+output="$(run_ready 2>&1)" || status=$?
+assert_eq "$status" "0" "uppercase NIC status"
+assert_contains "$READY_CASE/log" "ip arg=vpn_office" "uppercase NIC was not normalized"
+pass "vpn-ready lowercases SE_NICNAME"
+
+ready_reset
+SE_DNS_DOMAINS="lan"
+PGREP_STATUS=1
+status=0
+output="$(run_ready 2>&1)" || status=$?
+assert_eq "$status" "1" "dnsmasq missing status"
+printf '%s\n' "$output" | grep -F -q "Split DNS is not running" || fail "dnsmasq missing message"
+pass "vpn-ready fails when dnsmasq is not running"
+
+ready_reset
+SE_DNS_DOMAINS="lan"
+status=0
+output="$(run_ready 2>&1)" || status=$?
+assert_eq "$status" "1" "missing servers file status"
+printf '%s\n' "$output" | grep -F -q "Split DNS forwarders are not configured" || fail "missing servers file message"
+pass "vpn-ready fails when the servers file is missing"
+
+ready_reset
+SE_DNS_DOMAINS="lan"
+printf 'server=/lan/\n' > "$READY_CASE/run/servers.conf"
+status=0
+output="$(run_ready 2>&1)" || status=$?
+assert_eq "$status" "1" "placeholder servers status"
+printf '%s\n' "$output" | grep -F -q "Split DNS forwarders are not configured" || fail "placeholder servers message"
+pass "vpn-ready fails while a domain has no forwarder"
+
+ready_reset
+SE_DNS_DOMAINS="lan,home.arpa"
+printf 'server=/lan/192.168.2.1\nserver=/home.arpa/192.168.2.1\n' > "$READY_CASE/run/servers.conf"
+status=0
+output="$(run_ready 2>&1)" || status=$?
+assert_eq "$status" "0" "split DNS ready status"
+assert_eq "$output" "" "split DNS ready output"
+assert_contains "$READY_CASE/log" "pgrep arg=dnsmasq" "split DNS check did not look for dnsmasq"
+assert_not_contains "$READY_CASE/log" "nc arg=-z" "probe ran without a target"
+pass "vpn-ready passes when split DNS has forwarders"
+
+ready_reset
+SE_HEALTH_CHECK_TARGET="192.168.30.139:8081"
+NC_STATUS=1
+status=0
+output="$(run_ready 2>&1)" || status=$?
+assert_eq "$status" "1" "probe refused status"
+printf '%s\n' "$output" | grep -F -q "Health check target 192.168.30.139:8081 is not reachable" || fail "probe refused message"
+assert_contains "$READY_CASE/log" "nc arg=-z" "probe did not scan"
+assert_contains "$READY_CASE/log" "nc arg=-w" "probe did not set a timeout"
+assert_contains "$READY_CASE/log" "nc arg=3" "probe did not use the default timeout"
+assert_contains "$READY_CASE/log" "nc arg=192.168.30.139" "probe host was wrong"
+assert_contains "$READY_CASE/log" "nc arg=8081" "probe port was wrong"
+pass "vpn-ready fails when the health target refuses the connection"
+
+ready_reset
+SE_DNS_DOMAINS="lan"
+printf 'server=/lan/192.168.2.1\n' > "$READY_CASE/run/servers.conf"
+SE_HEALTH_CHECK_TARGET="ps5-shalltear.lan:8081"
+SE_HEALTH_CHECK_TIMEOUT="7"
+status=0
+output="$(run_ready 2>&1)" || status=$?
+assert_eq "$status" "0" "probe success status"
+assert_contains "$READY_CASE/log" "nc arg=7" "probe did not use SE_HEALTH_CHECK_TIMEOUT"
+assert_contains "$READY_CASE/log" "nc arg=ps5-shalltear.lan" "probe hostname was wrong"
+pass "vpn-ready probes the configured host and port"
 
 printf '%s tests passed\n' "$PASS"
