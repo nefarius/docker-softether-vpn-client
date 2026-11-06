@@ -90,7 +90,7 @@ docker run --pull=always --name docker-softether-vpn-client \
     -d containinger/docker-softether-vpn-client:latest
 ```
 
-The examples use `latest`, which tracks the newest stable release. The `docker run` examples pass `--pull=always` so a cached copy is not reused. For production, pin an immutable version tag that includes the features you use; older tags lack options documented here.
+The examples use `latest`, which tracks the newest stable release. The `docker run` examples pass `--pull=always`, and each Compose VPN service sets `pull_policy: always`, so a cached copy is not reused. For production, pin an immutable version tag that includes the features you use; older tags lack options documented here.
 
 ### Compose
 
@@ -98,6 +98,7 @@ The examples use `latest`, which tracks the newest stable release. The `docker r
 services:
   vpnclient:
     image: containinger/docker-softether-vpn-client:latest
+    pull_policy: always
     container_name: docker-softether-vpn-client
     cap_add:
       - NET_ADMIN
@@ -125,6 +126,7 @@ docker inspect --format '{{json .State.Health}}' guacamole-vpn
 services:
   vpnclient:
     image: containinger/docker-softether-vpn-client:latest
+    pull_policy: always
     container_name: guacamole-vpn
     cap_add:
       - NET_ADMIN
@@ -160,6 +162,7 @@ services:
 services:
   vpnclient:
     image: containinger/docker-softether-vpn-client:latest
+    pull_policy: always
     container_name: lan-vpn
     cap_add:
       - NET_ADMIN
@@ -204,6 +207,7 @@ From a checkout of this repository, `make mac` prints the same kind of address. 
 services:
   vpnclient:
     image: containinger/docker-softether-vpn-client:latest
+    pull_policy: always
     container_name: vps-vpn
     cap_add:
       - NET_ADMIN
