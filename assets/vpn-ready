@@ -39,8 +39,10 @@ esac
 if [ -n "${SE_DNS_DOMAINS:-}" ]; then
     # BusyBox pgrep -x matches argv[0]. dns-split execs /usr/sbin/dnsmasq,
     # so the comm name dnsmasq does not match. procps matches that comm name.
+    # pgrep patterns are regular expressions, so escape the configured path.
     dnsmasq_bin=${SE_DNSMASQ_BIN:-/usr/sbin/dnsmasq}
-    if ! pgrep -x dnsmasq >/dev/null 2>&1 && ! pgrep -x "$dnsmasq_bin" >/dev/null 2>&1; then
+    dnsmasq_pattern=$(printf '%s' "$dnsmasq_bin" | sed 's/[][(){}.+*?^$|\\]/\\&/g')
+    if ! pgrep -x dnsmasq >/dev/null 2>&1 && ! pgrep -x "$dnsmasq_pattern" >/dev/null 2>&1; then
         not_ready "Split DNS is not running"
     fi
     servers_file="${SE_DNS_RUN_DIR:-/run/softether-dns}/servers.conf"
