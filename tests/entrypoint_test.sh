@@ -998,6 +998,13 @@ log="${MOCK_LOG:?}"
         printf 'pgrep arg=%s\n' "$arg"
     done
 } >> "$log"
+if [ "${PGREP_REJECT_COMM:-0}" = "1" ]; then
+    for arg in "$@"; do
+        if [ "$arg" = "dnsmasq" ]; then
+            exit 1
+        fi
+    done
+fi
 if [ "${PGREP_STATUS:-0}" != "0" ]; then
     exit 1
 fi
@@ -1030,6 +1037,7 @@ ready_reset() {
     IP_STATUS=0
     IP_OUTPUT="2: vpn_vpn inet 192.168.2.130/24 scope global"
     PGREP_STATUS=0
+    PGREP_REJECT_COMM=0
     NC_STATUS=0
 }
 
@@ -1048,6 +1056,7 @@ run_ready() {
         IP_STATUS="$IP_STATUS" \
         IP_OUTPUT="$IP_OUTPUT" \
         PGREP_STATUS="$PGREP_STATUS" \
+        PGREP_REJECT_COMM="$PGREP_REJECT_COMM" \
         NC_STATUS="$NC_STATUS" \
         sh "$READY"
 }
@@ -1139,6 +1148,17 @@ assert_eq "$output" "" "split DNS ready output"
 assert_contains "$READY_CASE/log" "pgrep arg=dnsmasq" "split DNS check did not look for dnsmasq"
 assert_not_contains "$READY_CASE/log" "nc arg=-z" "probe ran without a target"
 pass "vpn-ready passes when split DNS has forwarders"
+
+ready_reset
+SE_DNS_DOMAINS="lan"
+PGREP_REJECT_COMM=1
+printf 'server=/lan/192.168.2.1\n' > "$READY_CASE/run/servers.conf"
+status=0
+output="$(run_ready 2>&1)" || status=$?
+assert_eq "$status" "0" "path-qualified dnsmasq status"
+assert_eq "$output" "" "path-qualified dnsmasq output"
+assert_contains "$READY_CASE/log" "pgrep arg=/usr/sbin/dnsmasq" "split DNS check did not look up the dnsmasq path"
+pass "vpn-ready accepts dnsmasq addressed by its path"
 
 ready_reset
 SE_HEALTH_CHECK_TARGET="192.168.30.139:8081"
