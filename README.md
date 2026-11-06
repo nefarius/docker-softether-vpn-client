@@ -79,7 +79,7 @@ IPv6 server literals are unsupported. Hub names that contain control characters 
 ## Quick start
 
 ```shell
-docker run --name docker-softether-vpn-client \
+docker run --pull=always --name docker-softether-vpn-client \
     --restart unless-stopped \
     --cap-add NET_ADMIN \
     --device /dev/net/tun:/dev/net/tun \
@@ -87,17 +87,18 @@ docker run --name docker-softether-vpn-client \
     -e SE_HUB=TheHub \
     -e SE_USERNAME=vpnuser \
     -e SE_PASSWORD="${SE_PASSWORD:?Set SE_PASSWORD from your secret store}" \
-    -d containinger/docker-softether-vpn-client:1.0.0
+    -d containinger/docker-softether-vpn-client:latest
 ```
 
-Replace `1.0.0` with the immutable tag you intend to run. `latest` moves only for the newest stable release.
+The examples use `latest`, which tracks the newest stable release. The `docker run` examples pass `--pull=always`, and each Compose VPN service sets `pull_policy: always`, so a cached copy is not reused. For production, pin an immutable version tag that includes the features you use; older tags lack options documented here.
 
 ### Compose
 
 ```yaml
 services:
   vpnclient:
-    image: containinger/docker-softether-vpn-client:1.0.0
+    image: containinger/docker-softether-vpn-client:latest
+    pull_policy: always
     container_name: docker-softether-vpn-client
     cap_add:
       - NET_ADMIN
@@ -124,7 +125,8 @@ docker inspect --format '{{json .State.Health}}' guacamole-vpn
 ```yaml
 services:
   vpnclient:
-    image: containinger/docker-softether-vpn-client:1.0.0
+    image: containinger/docker-softether-vpn-client:latest
+    pull_policy: always
     container_name: guacamole-vpn
     cap_add:
       - NET_ADMIN
@@ -159,7 +161,8 @@ services:
 ```yaml
 services:
   vpnclient:
-    image: containinger/docker-softether-vpn-client:1.0.0
+    image: containinger/docker-softether-vpn-client:latest
+    pull_policy: always
     container_name: lan-vpn
     cap_add:
       - NET_ADMIN
@@ -195,7 +198,7 @@ Give the adapter a stable MAC address and a DHCP hostname. The home router can r
 Generate an address and use that output as `SE_MAC_ADDRESS`. Each container on the same LAN needs its own address. The printed value is a locally administered unicast address: the second hexadecimal digit of the first octet is `2`, `6`, `a`, or `e`.
 
 ```shell
-docker run --rm containinger/docker-softether-vpn-client:1.0.0 gen-mac
+docker run --pull=always --rm containinger/docker-softether-vpn-client:latest gen-mac
 ```
 
 From a checkout of this repository, `make mac` prints the same kind of address. The address in the Compose file below is an example. Replace it.
@@ -203,7 +206,8 @@ From a checkout of this repository, `make mac` prints the same kind of address. 
 ```yaml
 services:
   vpnclient:
-    image: containinger/docker-softether-vpn-client:1.0.0
+    image: containinger/docker-softether-vpn-client:latest
+    pull_policy: always
     container_name: vps-vpn
     cap_add:
       - NET_ADMIN
