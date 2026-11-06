@@ -84,6 +84,33 @@ if ! dnsmasq --conf-file=/tmp/dns/dnsmasq.conf --test >/tmp/dnsmasq-test 2>&1; t
     cat /tmp/dnsmasq-test >&2
     exit 1
 fi
+/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/tmp/dns/dnsmasq.conf --port=5353 >/tmp/dnsmasq-run 2>&1 &
+dns_pid=$!
+seen=0
+i=0
+while [ "$i" -lt 25 ]; do
+    state=
+    if [ -r "/proc/${dns_pid}/status" ]; then
+        state=$(awk "/^State:/ { print \$2 }" "/proc/${dns_pid}/status")
+    fi
+    case "$state" in
+        R|S|D|I|W|T|t)
+            if pgrep -x /usr/sbin/dnsmasq >/dev/null 2>&1; then
+                seen=1
+                break
+            fi
+            ;;
+    esac
+    i=$((i + 1))
+    sleep 0.1
+done
+kill "$dns_pid" 2>/dev/null || true
+wait "$dns_pid" 2>/dev/null || true
+if [ "$seen" -ne 1 ]; then
+    echo "pgrep did not see a running dnsmasq" >&2
+    cat /tmp/dnsmasq-run >&2
+    exit 1
+fi
 python3 - <<'"'"'PY'"'"'
 import configparser
 parser = configparser.ConfigParser(interpolation=None)
