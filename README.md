@@ -79,7 +79,7 @@ IPv6 server literals are unsupported. Hub names that contain control characters 
 ## Quick start
 
 ```shell
-docker run --name docker-softether-vpn-client \
+docker run --pull=always --name docker-softether-vpn-client \
     --restart unless-stopped \
     --cap-add NET_ADMIN \
     --device /dev/net/tun:/dev/net/tun \
@@ -90,7 +90,7 @@ docker run --name docker-softether-vpn-client \
     -d containinger/docker-softether-vpn-client:latest
 ```
 
-The examples use `latest`, which tracks the newest stable release. For production, pin an immutable version tag that includes the features you use; older tags lack options documented here.
+The examples use `latest`, which tracks the newest stable release. The `docker run` examples pass `--pull=always` so a cached copy is not reused. For production, pin an immutable version tag that includes the features you use; older tags lack options documented here.
 
 ### Compose
 
@@ -195,7 +195,7 @@ Give the adapter a stable MAC address and a DHCP hostname. The home router can r
 Generate an address and use that output as `SE_MAC_ADDRESS`. Each container on the same LAN needs its own address. The printed value is a locally administered unicast address: the second hexadecimal digit of the first octet is `2`, `6`, `a`, or `e`.
 
 ```shell
-docker run --rm containinger/docker-softether-vpn-client:latest gen-mac
+docker run --pull=always --rm containinger/docker-softether-vpn-client:latest gen-mac
 ```
 
 From a checkout of this repository, `make mac` prints the same kind of address. The address in the Compose file below is an example. Replace it.
